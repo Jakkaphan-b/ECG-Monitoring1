@@ -1,6 +1,6 @@
-// src/components/Login.jsx
+// src/components/auth/Login.jsx
 import React, { useState } from "react";
-import { auth, db } from "../firebase";
+import { auth, db } from '../../firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { Link, useNavigate } from "react-router-dom";
@@ -20,13 +20,10 @@ function Login() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const userId = userCredential.user.uid;
       
-      // Fetch user role from Firestore
       const userDoc = await getDoc(doc(db, "users", userId));
       if (userDoc.exists()) {
         const userData = userDoc.data();
         const role = userData.role || "patient";
-        
-        // Navigate based on role
         switch (role) {
           case "admin":
             navigate("/admin");
@@ -43,9 +40,9 @@ function Login() {
         navigate("/dashboard");
       }
       
-      alert("✅ เข้าสู่ระบบสำเร็จ");
+      alert("✅ Logged in");
     } catch (err) {
-      alert("❌ ล็อกอินผิดพลาด: " + err.message);
+      alert("❌ Login error: " + err.message);
     } finally {
       setIsLoading(false);
     }
@@ -53,16 +50,16 @@ function Login() {
 
   const handleForgotPassword = async () => {
     if (!email) {
-      alert("กรุณากรอกอีเมลก่อน");
+      alert("Please enter email");
       return;
     }
     
     try {
       await sendPasswordResetEmail(auth, email);
-      alert("✅ ส่งลิงก์รีเซ็ตรหัสผ่านไปยังอีเมลแล้ว");
+      alert("✅ Reset email sent");
       setShowForgotPassword(false);
     } catch (err) {
-      alert("❌ ส่งอีเมลรีเซ็ตผิดพลาด: " + err.message);
+      alert("❌ Error sending reset: " + err.message);
     }
   };
 
@@ -71,16 +68,16 @@ function Login() {
       <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full space-y-6">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">ECG Monitor</h1>
-          <h2 className="text-xl font-semibold text-blue-600">เข้าสู่ระบบ</h2>
-          <p className="text-gray-600 text-sm mt-2">ระบบติดตามคลื่นไฟฟ้าหัวใจ</p>
+          <h2 className="text-xl font-semibold text-blue-600">Login</h2>
+          <p className="text-gray-600 text-sm mt-2">Sign in to continue</p>
         </div>
         
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">อีเมล</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input 
               type="email" 
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200" 
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg" 
               placeholder="your@email.com" 
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
@@ -89,11 +86,11 @@ function Login() {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">รหัสผ่าน</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
             <input 
               type="password" 
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200" 
-              placeholder="รหัสผ่าน" 
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg" 
+              placeholder="password" 
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               required 
@@ -103,9 +100,9 @@ function Login() {
           <button 
             type="submit"
             disabled={isLoading}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed transition duration-200 font-medium"
+            className="w-full bg-blue-600 text-white py-3 rounded-lg"
           >
-            {isLoading ? "กำลังเข้าสู่ระบบ..." : "เข้าสู่ระบบ"}
+            {isLoading ? "Logging in..." : "Login"}
           </button>
         </form>
         
@@ -114,30 +111,24 @@ function Login() {
             onClick={() => setShowForgotPassword(!showForgotPassword)}
             className="w-full text-blue-600 hover:text-blue-800 text-sm font-medium"
           >
-            ลืมรหัสผ่าน?
+            Forgot password?
           </button>
-          
           {showForgotPassword && (
             <button
               onClick={handleForgotPassword}
-              className="w-full bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 transition duration-200 text-sm"
+              className="w-full bg-gray-100 text-gray-700 py-2 rounded-lg text-sm"
             >
-              ส่งลิงก์รีเซ็ตรหัสผ่าน
+              Send reset email
             </button>
           )}
-          
           <div className="text-center">
-            <span className="text-gray-600 text-sm">ยังไม่มีบัญชี? </span>
-            <Link to="/register" className="text-blue-600 hover:text-blue-800 font-medium text-sm">
-              สมัครสมาชิก
-            </Link>
+            <span className="text-gray-600 text-sm">Don't have an account? </span>
+            <Link to="/register" className="text-blue-600 hover:text-blue-800 font-medium text-sm">Register</Link>
           </div>
         </div>
       </div>
     </div>
   );
 }
-
-
 
 export default Login;

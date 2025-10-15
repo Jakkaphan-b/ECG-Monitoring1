@@ -2,16 +2,15 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from './App.jsx'
-import Login from "./components/Login";
-import Register from "./components/Register";
-import Dashboard from "./components/Dashboard";
-import History from "./components/History";
-import AlertsCenter from "./components/AlertsCenter";
-import DeviceSetup from "./components/DeviceSetup";
-import UserProfile from "./components/UserProfile";
-import AdminConsole from "./components/AdminConsole";
-import ProtectedRoute from "./components/ProtectedRoute";
-import Navigation from "./components/Navigation";
+import { Login, Register, ProtectedRoute } from "./components/auth";
+import { Dashboard } from "./components/dashboard";
+import { History } from "./components/history";
+import { AlertsCenter } from "./components/alerts";
+import { DeviceSetup } from "./components/device";
+import { UserProfile } from "./components/profile";
+import { AdminConsole } from "./components/admin";
+import { CareTeam } from "./components/care";
+import { Navigation } from "./components/ui";
 import './index.css'
 
 function AppWrapper({ children }) {
@@ -75,6 +74,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <ProtectedRoute>
             <AppWrapper>
               <UserProfile />
+            </AppWrapper>
+          </ProtectedRoute>
+        } />
+        <Route path="/care-team" element={
+          <ProtectedRoute>
+            <AppWrapper>
+              <CareTeam />
             </AppWrapper>
           </ProtectedRoute>
         } />

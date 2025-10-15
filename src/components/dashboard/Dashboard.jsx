@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db } from '../firebase';
+import { auth, db } from '../../firebase';
 import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
@@ -18,18 +18,15 @@ const Dashboard = () => {
     current: 0,
     status: 'Normal'
   });
-  const [lineNotifyStatus, setLineNotifyStatus] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        // Get user data from Firestore
         const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
         if (userDoc.exists()) {
           setUserData(userDoc.data());
-          setLineNotifyStatus(!!userDoc.data().line_notify_token);
         }
         
         // Set up real-time ECG data listener
@@ -47,7 +44,6 @@ const Dashboard = () => {
           }));
           setEcgData(data);
           
-          // Update heart rate and status from latest data
           if (data.length > 0) {
             const latest = data[0];
             setHeartRate({
@@ -56,7 +52,7 @@ const Dashboard = () => {
             });
             
             setDeviceStatus({
-              online: (new Date() - new Date(latest.timestamp)) < 30000, // Online if data within 30 seconds
+              online: (new Date() - new Date(latest.timestamp)) < 30000,
               rssi: latest.rssi,
               battery: latest.battery,
               lastUpdate: latest.timestamp
@@ -91,20 +87,6 @@ const Dashboard = () => {
     }
   };
 
-  const testNotification = async () => {
-    // Simulate notification test
-    alert('🔔 ทดสอบการแจ้งเตือนสำเร็จ! (จำลอง)');
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      navigate('/');
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
-
   if (!user || !userData) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -118,39 +100,9 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      {/* <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">ECG Monitor Dashboard</h1>
-              <p className="text-sm text-gray-600">
-                สวัสดี, {userData.first_name} {userData.last_name} ({userData.role})
-              </p>
-            </div>
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => navigate('/profile')}
-                className="text-blue-600 hover:text-blue-800 px-3 py-2 rounded-md text-sm font-medium"
-              >
-                โปรไฟล์
-              </button>
-              <button
-                onClick={handleLogout}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
-              >
-                ออกจากระบบ
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>/*}
-
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Status Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {/* Device Status */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center">
               <div className={`w-3 h-3 rounded-full ${deviceStatus.online ? 'bg-green-500' : 'bg-red-500'} mr-3`}></div>
@@ -159,17 +111,10 @@ const Dashboard = () => {
                 <p className="text-lg font-semibold text-gray-900">
                   {deviceStatus.online ? 'Online' : 'Offline'}
                 </p>
-                {deviceStatus.rssi && (
-                  <p className="text-xs text-gray-500">RSSI: {deviceStatus.rssi} dBm</p>
-                )}
-                {deviceStatus.battery && (
-                  <p className="text-xs text-gray-500">แบต: {deviceStatus.battery}%</p>
-                )}
               </div>
             </div>
           </div>
 
-          {/* Heart Rate */}
           <div className="bg-white rounded-lg shadow p-6">
             <div>
               <p className="text-sm font-medium text-gray-600">อัตราการเต้นหัวใจ</p>
@@ -180,23 +125,13 @@ const Dashboard = () => {
             </div>
           </div>
 
-          {/* LINE Notify Status */}
           <div className="bg-white rounded-lg shadow p-6">
             <div>
               <p className="text-sm font-medium text-gray-600">LINE Notify</p>
-              <p className="text-lg font-semibold text-gray-900">
-                {lineNotifyStatus ? 'เชื่อมต่อแล้ว' : 'ยังไม่เชื่อมต่อ'}
-              </p>
-              <button
-                onClick={testNotification}
-                className="mt-2 text-xs bg-green-100 hover:bg-green-200 text-green-800 px-2 py-1 rounded"
-              >
-                ทดสอบแจ้งเตือน
-              </button>
+              <p className="text-lg font-semibold text-gray-900">เชื่อมต่อแล้ว</p>
             </div>
           </div>
 
-          {/* Last Update */}
           <div className="bg-white rounded-lg shadow p-6">
             <div>
               <p className="text-sm font-medium text-gray-600">ข้อมูลล่าสุด</p>
