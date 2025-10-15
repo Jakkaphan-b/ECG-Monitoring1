@@ -1,9 +1,9 @@
 import React from 'react'
 
-const navbars = () => {
+const AddUser = () => {
   return (
     <div>Adduser</div>
   )
 }
 
-export default navbars
+export default AddUser
