@@ -13,18 +13,25 @@ import {
 } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { onAuthStateChanged } from 'firebase/auth';
+import { lineService } from '../../services/lineService';
+import { notificationService } from '../../services/notificationService';
+import LineQRCode from './LineQRCode';
 
 const CareTeam = () => {
   const [careTeam, setCareTeam] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
+  const [showLineConnect, setShowLineConnect] = useState(false);
+  const [selectedMember, setSelectedMember] = useState(null);
+  const [lineUserId, setLineUserId] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     role: 'family',
     notifications_enabled: true,
+    line_notifications: true,
   });
   const navigate = useNavigate();
 
@@ -75,6 +82,57 @@ const CareTeam = () => {
     return () => unsubscribe();
   }, [navigate, fetchCareTeam]);
 
+  // เชื่อมต่อ LINE
+  const connectLine = async (member) => {
+    setSelectedMember(member);
+    setShowLineConnect(true);
+  };
+
+  // บันทึก LINE User ID
+  const saveLineConnection = async () => {
+    if (!lineUserId.trim()) {
+      alert('กรุณากรอก LINE User ID');
+      return;
+    }
+
+    // ตรวจสอบรูปแบบ LINE User ID
+    const lineUserIdPattern = /^U[a-f0-9]{32}$/i;
+    if (!lineUserIdPattern.test(lineUserId.trim())) {
+      alert('รูปแบบ LINE User ID ไม่ถูกต้อง\nต้องเริ่มต้นด้วย U ตามด้วยตัวอักษรและตัวเลข 32 ตัว\nเช่น: U1234567890abcdef1234567890abcdef1');
+      return;
+    }
+
+    try {
+      await lineService.saveLineUserId(user.uid, selectedMember.id, lineUserId.trim());
+      alert('เชื่อมต่อ LINE สำเร็จ');
+      setShowLineConnect(false);
+      setLineUserId('');
+      setSelectedMember(null);
+      fetchCareTeam(user);
+    } catch (error) {
+      console.error('Error connecting LINE:', error);
+      alert('เกิดข้อผิดพลาดในการเชื่อมต่อ LINE: ' + error.message);
+    }
+  };
+
+  // ทดสอบการส่งการแจ้งเตือน
+  const testEmergencyNotification = async () => {
+    if (!confirm('🧪 ทดสอบระบบแจ้งเตือน\n\nระบบจะส่งการแจ้งเตือนทดสอบไปยัง:\n• อีเมลของสมาชิกที่เปิดใช้งาน\n• LINE ของสมาชิกที่เชื่อมต่อแล้ว\n\nต้องการดำเนินการต่อหรือไม่?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const result = await notificationService.sendTestNotification(user.uid);
+      alert(`✅ ส่งการแจ้งเตือนทดสอบสำเร็จ!\n\n📊 สถิติการส่ง:\n• จำนวนผู้รับ: ${result.recipients} คน\n• ช่องทาง: อีเมล + LINE Message\n\nกรุณาตรวจสอบอีเมลและ LINE ของสมาชิก`);
+    } catch (error) {
+      console.error('Error sending test notification:', error);
+      alert('❌ เกิดข้อผิดพลาดในการส่งการแจ้งเตือนทดสอบ\n\nรายละเอียด: ' + error.message + '\n\nกรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // เพิ่มสมาชิก
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -106,6 +164,7 @@ const CareTeam = () => {
         phone: formData.phone.trim(),
         role: formData.role,
         notifications_enabled: formData.notifications_enabled,
+        line_notifications: formData.line_notifications,
         created_at: serverTimestamp(),
         created_by: user.uid,
       });
@@ -119,6 +178,7 @@ const CareTeam = () => {
         phone: '',
         role: 'family',
         notifications_enabled: true,
+        line_notifications: true,
       });
       setShowAddForm(false);
       fetchCareTeam(user);
@@ -250,6 +310,16 @@ const CareTeam = () => {
                     <p className="text-2xl font-bold text-blue-600">{careTeam.length}</p>
                   </div>
                   <button
+                    onClick={testEmergencyNotification}
+                    className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm flex items-center"
+                    disabled={loading}
+                  >
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5v-5zM4.828 7l5.657-5.657A2 2 0 0112 .586h5.414A2 2 0 0119 2v5.414a2 2 0 01-.586 1.414L13.657 14M4.828 7L9 11.172M4.828 7L2 4.172M9 11.172L13.657 14M9 11.172L11.172 9" />
+                    </svg>
+                    ทดสอบการแจ้งเตือน
+                  </button>
+                  <button
                     onClick={() => setShowAddForm(true)}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg text-sm font-medium shadow-sm flex items-center"
                     disabled={loading}
@@ -266,7 +336,7 @@ const CareTeam = () => {
 
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
                 <div className="flex items-center">
                   <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -283,15 +353,31 @@ const CareTeam = () => {
 
               <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
                 <div className="flex items-center">
-                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5v-5zM4.828 7l5.657-5.657A2 2 0 0112 .586h5.414A2 2 0 0119 2v5.414a2 2 0 01-.586 1.414L13.657 14M4.828 7L9 11.172M4.828 7L2 4.172M9 11.172L13.657 14M9 11.172L11.172 9" />
+                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
                   </div>
                   <div className="ml-4">
-                    <p className="text-sm font-medium text-gray-600">เปิดการแจ้งเตือน</p>
-                    <p className="text-3xl font-bold text-green-600">
+                    <p className="text-sm font-medium text-gray-600">อีเมลแจ้งเตือน</p>
+                    <p className="text-3xl font-bold text-blue-600">
                       {careTeam.filter(m => m.notifications_enabled).length}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+                <div className="flex items-center">
+                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div className="ml-4">
+                    <p className="text-sm font-medium text-gray-600">เชื่อมต่อ LINE</p>
+                    <p className="text-3xl font-bold text-green-600">
+                      {careTeam.filter(m => m.line_notifications).length}
                     </p>
                   </div>
                 </div>
@@ -324,8 +410,9 @@ const CareTeam = () => {
                   </h3>
                   <div className="text-blue-800 text-sm leading-relaxed space-y-2">
                     <p>• เพิ่มสมาชิกในครอบครัว แพทย์ พยาบาล หรือผู้ดูแลที่ต้องการรับการแจ้งเตือนเมื่อมีภาวะผิดปกติ</p>
-                    <p>• ระบบจะส่งการแจ้งเตือนไปยังอีเมลของสมาชิกที่เปิดใช้งานการแจ้งเตือนทันที</p>
-                    <p>• สามารถจัดการสถานะการแจ้งเตือนและลบสมาชิกได้ตามต้องการ</p>
+                    <p>• ระบบจะส่งการแจ้งเตือนผ่าน <strong>อีเมล</strong> และ <strong>LINE Message</strong> ให้สมาชิกที่เปิดใช้งานทันที</p>
+                    <p>• <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">🟢 LINE Bot พร้อมใช้งาน</span> สามารถเชื่อมต่อและรับการแจ้งเตือนได้แล้ว</p>
+                    <p>• ทดสอบระบบแจ้งเตือนด้วยปุ่ม "ทดสอบการแจ้งเตือน" เพื่อยืนยันการทำงาน</p>
                   </div>
                 </div>
               </div>
@@ -413,21 +500,68 @@ const CareTeam = () => {
                       </select>
                     </div>
 
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="notifications"
+                          checked={formData.notifications_enabled}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              notifications_enabled: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <label htmlFor="notifications" className="ml-2 text-sm text-gray-700">
+                          เปิดใช้งานการแจ้งเตือนทางอีเมล
+                        </label>
+                      </div>
+
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="line_notifications"
+                          checked={formData.line_notifications}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              line_notifications: e.target.checked,
+                            })
+                          }
+                          className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                        />
+                        <label htmlFor="line_notifications" className="ml-2 text-sm text-gray-700">
+                          เปิดใช้งานการแจ้งเตือนทาง LINE
+                        </label>
+                      </div>
+
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
+                        <div className="flex items-start">
+                          <svg className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span>หากเปิดใช้งาน LINE จะมีปุ่ม "เชื่อมต่อ LINE" ให้คลิกหลังจากเพิ่มสมาชิกแล้ว</span>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="flex items-center">
                       <input
                         type="checkbox"
-                        id="notifications"
-                        checked={formData.notifications_enabled}
+                        id="lineNotifications"
+                        checked={formData.line_notifications}
                         onChange={(e) =>
                           setFormData({
                             ...formData,
-                            notifications_enabled: e.target.checked,
+                            line_notifications: e.target.checked,
                           })
                         }
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
                       />
-                      <label htmlFor="notifications" className="ml-2 text-sm text-gray-700">
-                        เปิดใช้งานการแจ้งเตือน
+                      <label htmlFor="lineNotifications" className="ml-2 text-sm text-gray-700">
+                        เปิดใช้งานการแจ้งเตือนทาง LINE
                       </label>
                     </div>
 
@@ -514,24 +648,39 @@ const CareTeam = () => {
                                   <span className="text-sm">{member.phone}</span>
                                 </div>
                               )}
-                              <div className="flex items-center mt-2">
+                              <div className="flex items-center mt-2 space-x-2">
                                 <span
                                   className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
                                     member.notifications_enabled
-                                      ? 'bg-green-100 text-green-800'
+                                      ? 'bg-blue-100 text-blue-800'
                                       : 'bg-gray-100 text-gray-800'
                                   }`}
                                 >
                                   {member.notifications_enabled
-                                    ? '🔔 รับการแจ้งเตือน'
-                                    : '🔕 ไม่รับการแจ้งเตือน'}
+                                    ? '� อีเมล'
+                                    : '� ปิดอีเมล'}
                                 </span>
+                                
+                                {member.line_notifications && (
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    💬 LINE
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center space-x-3">
+                          {member.line_notifications && (
+                            <button
+                              onClick={() => connectLine(member)}
+                              className="px-4 py-2 bg-green-100 text-green-800 hover:bg-green-200 rounded-lg text-sm font-medium transition-colors"
+                            >
+                              เชื่อมต่อ LINE
+                            </button>
+                          )}
+                          
                           <button
                             onClick={() =>
                               toggleNotifications(
@@ -657,6 +806,141 @@ const CareTeam = () => {
               </div>
             </div>
           </main>
+
+          {/* LINE Connection Modal */}
+          {showLineConnect && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 w-full max-w-lg mx-4 max-h-screen overflow-y-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    เชื่อมต่อ LINE
+                  </h2>
+                  <button
+                    onClick={() => setShowLineConnect(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 mb-2">
+                    สมาชิก: <strong>{selectedMember?.name}</strong>
+                  </p>
+                </div>
+
+                {/* QR Code Section */}
+                <div className="mb-6">
+                  <LineQRCode 
+                    lineOfficialId="@981xsbcm" 
+                    isReady={true} 
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      LINE User ID
+                    </label>
+                    <input
+                      type="text"
+                      value={lineUserId}
+                      onChange={(e) => setLineUserId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="U1234567890abcdef..."
+                    />
+                  </div>
+
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div className="flex items-start">
+                      <svg className="w-5 h-5 text-yellow-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm text-yellow-800">
+                          <strong>วิธีหา LINE User ID:</strong><br/>
+                          1. เพิ่มเพื่อน LINE Official Account ด้านบน<br/>
+                          2. ส่งข้อความ "myid" หรือ "id" ในแชท<br/>
+                          3. ระบบจะตอบกลับด้วย User ID<br/>
+                          <br/>
+                          <strong>หมายเหตุ:</strong> ไม่ใช่ LINE ID ปกติ (@username) แต่เป็น ID พิเศษสำหรับระบบแจ้งเตือน
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-start">
+                      <svg className="w-5 h-5 text-blue-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm text-blue-800">
+                          <strong>ตัวอย่าง LINE User ID:</strong><br/>
+                          <code className="bg-gray-100 px-2 py-1 rounded text-xs">U1234567890abcdef1234567890abcdef1</code><br/>
+                          <span className="text-xs">(เริ่มต้นด้วย U ตามด้วยตัวอักษรและตัวเลข 32 ตัว)</span>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-start">
+                      <svg className="w-5 h-5 text-red-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm text-red-800">
+                          <strong>ข้อสำคัญ:</strong> LINE User ID ไม่ใช่ LINE ID ปกติ (@username)<br/>
+                          ต้องเป็น ID พิเศษที่ได้จากการส่งข้อความ "myid" ให้ LINE Official Account
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowLineConnect(false)}
+                      className="flex-1 px-4 py-2 text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-md text-sm font-medium"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      onClick={saveLineConnection}
+                      className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm font-medium"
+                    >
+                      เชื่อมต่อ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Success Note about LINE */}
+          <div className="mt-8 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-start">
+              <svg className="w-5 h-5 text-green-600 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="text-sm text-green-800">
+                <p className="font-semibold mb-2">✅ ระบบแจ้งเตือน LINE พร้อมใช้งานแล้ว!</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>Firebase Functions ได้ Deploy สำเร็จแล้ว</li>
+                  <li>LINE Official Account พร้อมรับการเชื่อมต่อ</li>
+                  <li>สมาชิกสามารถเพิ่มเพื่อนและขอ LINE User ID ได้แล้ว</li>
+                  <li>ระบบจะส่งการแจ้งเตือนผ่าน Email และ LINE Message แบบทันที</li>
+                  <li>ทดสอบการแจ้งเตือนได้ด้วยปุ่ม "ทดสอบการแจ้งเตือน"</li>
+                </ul>
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded">
+                  <p className="text-xs text-blue-800">
+                    <strong>วิธีใช้:</strong> คลิก "เชื่อมต่อ LINE" → สแกน QR Code → ส่ง "myid" → กรอก User ID
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         </>
       )}
     </div>

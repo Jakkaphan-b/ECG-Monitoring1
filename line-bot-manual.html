@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE Bot Manual Response</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #00c300;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .step {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border-left: 4px solid #00c300;
+        }
+        .user-id {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #2196f3;
+        }
+        .warning {
+            background: #fff3e0;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #ff9800;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        button {
+            background: #00c300;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #00a300;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 LINE Bot Manual Setup</h1>
+        
+        <div class="warning">
+            <h3>⚠️ ปัญหาปัจจุบัน</h3>
+            <p>Firebase Functions ยังไม่ได้ deploy เพราะต้องอัปเกรด Blaze Plan ก่อน</p>
+            <p>ในระหว่างนี้ใช้วิธี Manual ก่อน</p>
+        </div>
+
+        <div class="step">
+            <h3>📱 ขั้นตอนที่ 1: เพิ่มเพื่อน LINE Official Account</h3>
+            <p>1. เปิด LINE → เพิ่มเพื่อน → ค้นหา</p>
+            <p>2. พิมพ์: <code>@981xsbcm</code></p>
+            <p>3. เพิ่มเป็นเพื่อน</p>
+        </div>
+
+        <div class="step">
+            <h3>🔍 ขั้นตอนที่ 2: ขอ LINE User ID (Manual)</h3>
+            <p><strong>เนื่องจาก Bot ยังไม่ตอบกลับ ให้ทำดังนี้:</strong></p>
+            
+            <h4>วิธีที่ 1: ใช้ LINE Developer Tools</h4>
+            <ol>
+                <li>ไปที่ <a href="https://developers.line.biz/console/" target="_blank">LINE Developers Console</a></li>
+                <li>เลือก Channel ID: 2008296167</li>
+                <li>ไปที่ Messaging API → ส่งข้อความทดสอบ</li>
+                <li>ส่งข้อความไปหา User ที่เพิ่มเพื่อนแล้ว</li>
+            </ol>
+
+            <h4>วิธีที่ 2: ใช้ Webhook Simulator</h4>
+            <button onclick="simulateWebhook()">🧪 จำลอง Webhook Response</button>
+            
+            <div id="webhook-result" style="display:none;" class="user-id">
+                <h4>📋 ตัวอย่าง LINE User ID:</h4>
+                <p>เมื่อ Bot ทำงานจะได้ User ID ในรูปแบบ:</p>
+                <code id="generated-user-id">U1234567890abcdef1234567890abcdef1</code>
+                <br><br>
+                <button onclick="copyUserID()">📋 Copy User ID</button>
+                <p><small>⚠️ นี่เป็นตัวอย่าง ต้องรอ Firebase Functions ทำงานจริง</small></p>
+            </div>
+        </div>
+
+        <div class="step">
+            <h3>🔧 ขั้นตอนที่ 3: Deploy Firebase Functions</h3>
+            <p>1. อัปเกรด Firebase เป็น <a href="https://console.firebase.google.com/project/ecg-monitor-f1fcb/usage/details" target="_blank">Blaze Plan</a></p>
+            <p>2. รัน: <code>firebase deploy --only functions</code></p>
+            <p>3. ตั้งค่า Webhook URL ใน LINE Console</p>
+            <p>4. ทดสอบส่ง "myid" อีกครั้ง</p>
+        </div>
+
+        <div class="user-id">
+            <h3>🎯 สิ่งที่ต้องมี:</h3>
+            <ul>
+                <li>✅ LINE Official Account: @981xsbcm</li>
+                <li>✅ Channel ID: 2008296167</li>
+                <li>❌ Firebase Functions (รอ Blaze Plan)</li>
+                <li>❌ Webhook URL (รอ Deploy Functions)</li>
+                <li>❌ Auto Reply Bot (รอ Functions)</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>🚀 ทางเลือกชั่วคราว</h3>
+            <p>1. ใช้ LINE User ID ตัวอย่าง: <code>U1234567890abcdef1234567890abcdef1</code></p>
+            <p>2. ทดสอบระบบการแจ้งเตือนอีเมลก่อน</p>
+            <p>3. รอ Deploy Functions เสร็จแล้วค่อยเปิดใช้ LINE</p>
+        </div>
+    </div>
+
+    <script>
+        function simulateWebhook() {
+            const result = document.getElementById('webhook-result');
+            const userIdElement = document.getElementById('generated-user-id');
+            
+            // สร้าง User ID ตัวอย่าง
+            const randomHex = Array.from({length: 32}, () => 
+                Math.floor(Math.random() * 16).toString(16)
+            ).join('');
+            const simulatedUserId = 'U' + randomHex;
+            
+            userIdElement.textContent = simulatedUserId;
+            result.style.display = 'block';
+        }
+
+        function copyUserID() {
+            const userIdText = document.getElementById('generated-user-id').textContent;
+            navigator.clipboard.writeText(userIdText).then(() => {
+                alert('คัดลอก User ID แล้ว!\n\n⚠️ หมายเหตุ: นี่เป็นตัวอย่าง ต้องรอ Firebase Functions ทำงานจริง');
+            });
+        }
+    </script>
+</body>
+</html>
