@@ -115,19 +115,19 @@ const CareTeam = () => {
     }
   };
 
-  // ทดสอบการส่งการแจ้งเตือน
+  // ทดสอบการส่งการแจ้งเตือน Email (พัก LINE ไว้ก่อน)
   const testEmergencyNotification = async () => {
-    if (!confirm('🧪 ทดสอบระบบแจ้งเตือน\n\nระบบจะส่งการแจ้งเตือนทดสอบไปยัง:\n• อีเมลของสมาชิกที่เปิดใช้งาน\n• LINE ของสมาชิกที่เชื่อมต่อแล้ว\n\nต้องการดำเนินการต่อหรือไม่?')) {
+    if (!confirm('🧪 ทดสอบระบบแจ้งเตือน Email\n\nระบบจะส่งการแจ้งเตือนทดสอบไปยัง:\n• อีเมลของสมาชิกที่เปิดใช้งาน\n\n(หมายเหตุ: การแจ้งเตือนผ่าน LINE จะเปิดใช้งานในอนาคต)\n\nต้องการดำเนินการต่อหรือไม่?')) {
       return;
     }
 
     try {
       setLoading(true);
       const result = await notificationService.sendTestNotification(user.uid);
-      alert(`✅ ส่งการแจ้งเตือนทดสอบสำเร็จ!\n\n📊 สถิติการส่ง:\n• จำนวนผู้รับ: ${result.recipients} คน\n• ช่องทาง: อีเมล + LINE Message\n\nกรุณาตรวจสอบอีเมลและ LINE ของสมาชิก`);
+      alert(`✅ ส่งการแจ้งเตือน Email ทดสอบสำเร็จ!\n\n📊 สถิติการส่ง:\n• จำนวนผู้รับ: ${result.recipients} คน\n• ช่องทาง: อีเมลเท่านั้น\n\nกรุณาตรวจสอบอีเมลของสมาชิก`);
     } catch (error) {
       console.error('Error sending test notification:', error);
-      alert('❌ เกิดข้อผิดพลาดในการส่งการแจ้งเตือนทดสอบ\n\nรายละเอียด: ' + error.message + '\n\nกรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ');
+      alert('❌ เกิดข้อผิดพลาดในการส่งการแจ้งเตือน Email ทดสอบ\n\nรายละเอียด: ' + error.message + '\n\nกรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ');
     } finally {
       setLoading(false);
     }
@@ -164,7 +164,7 @@ const CareTeam = () => {
         phone: formData.phone.trim(),
         role: formData.role,
         notifications_enabled: formData.notifications_enabled,
-        line_notifications: formData.line_notifications,
+        line_notifications: false, // พัก LINE ไว้ก่อน
         created_at: serverTimestamp(),
         created_by: user.uid,
       });
@@ -410,8 +410,9 @@ const CareTeam = () => {
                   </h3>
                   <div className="text-blue-800 text-sm leading-relaxed space-y-2">
                     <p>• เพิ่มสมาชิกในครอบครัว แพทย์ พยาบาล หรือผู้ดูแลที่ต้องการรับการแจ้งเตือนเมื่อมีภาวะผิดปกติ</p>
-                    <p>• ระบบจะส่งการแจ้งเตือนผ่าน <strong>อีเมล</strong> และ <strong>LINE Message</strong> ให้สมาชิกที่เปิดใช้งานทันที</p>
-                    <p>• <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">🟢 LINE Bot พร้อมใช้งาน</span> สามารถเชื่อมต่อและรับการแจ้งเตือนได้แล้ว</p>
+                    <p>• ระบบจะส่งการแจ้งเตือนผ่าน <strong>อีเมล</strong> ให้สมาชิกที่เปิดใช้งานทันที</p>
+                    <p>• <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-medium">🟢 Email Notification พร้อมใช้งาน</span></p>
+                    <p>• <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-medium">🟡 LINE Notification กำลังพัฒนา</span> (เก็บไว้สำหรับอนาคต)</p>
                     <p>• ทดสอบระบบแจ้งเตือนด้วยปุ่ม "ทดสอบการแจ้งเตือน" เพื่อยืนยันการทำงาน</p>
                   </div>
                 </div>
@@ -519,7 +520,7 @@ const CareTeam = () => {
                         </label>
                       </div>
 
-                      <div className="flex items-center">
+                      <div className="flex items-center opacity-50">
                         <input
                           type="checkbox"
                           id="line_notifications"
@@ -531,39 +532,24 @@ const CareTeam = () => {
                             })
                           }
                           className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                          disabled={true}
                         />
-                        <label htmlFor="line_notifications" className="ml-2 text-sm text-gray-700">
-                          เปิดใช้งานการแจ้งเตือนทาง LINE
+                        <label htmlFor="line_notifications" className="ml-2 text-sm text-gray-500">
+                          เปิดใช้งานการแจ้งเตือนทาง LINE (กำลังพัฒนา)
                         </label>
                       </div>
 
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
                         <div className="flex items-start">
                           <svg className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
-                          <span>หากเปิดใช้งาน LINE จะมีปุ่ม "เชื่อมต่อ LINE" ให้คลิกหลังจากเพิ่มสมาชิกแล้ว</span>
+                          <span>การแจ้งเตือนผ่าน LINE จะพร้อมใช้งานในอนาคต ขณะนี้ใช้ Email เท่านั้น</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id="lineNotifications"
-                        checked={formData.line_notifications}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            line_notifications: e.target.checked,
-                          })
-                        }
-                        className="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-                      />
-                      <label htmlFor="lineNotifications" className="ml-2 text-sm text-gray-700">
-                        เปิดใช้งานการแจ้งเตือนทาง LINE
-                      </label>
-                    </div>
+
 
                     <div className="flex space-x-3 pt-4">
                       <button
@@ -661,25 +647,23 @@ const CareTeam = () => {
                                     : '� ปิดอีเมล'}
                                 </span>
                                 
-                                {member.line_notifications && (
-                                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                    💬 LINE
-                                  </span>
-                                )}
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                  💬 LINE (เร็วๆ นี้)
+                                </span>
                               </div>
                             </div>
                           </div>
                         </div>
 
                         <div className="flex items-center space-x-3">
-                          {member.line_notifications && (
-                            <button
-                              onClick={() => connectLine(member)}
-                              className="px-4 py-2 bg-green-100 text-green-800 hover:bg-green-200 rounded-lg text-sm font-medium transition-colors"
-                            >
-                              เชื่อมต่อ LINE
-                            </button>
-                          )}
+                          {/* ปุ่ม LINE ชั่วคราวปิดใช้งาน */}
+                          <button
+                            disabled={true}
+                            className="px-4 py-2 bg-gray-100 text-gray-400 rounded-lg text-sm font-medium cursor-not-allowed"
+                            title="กำลังพัฒนา - จะเปิดใช้งานเร็วๆ นี้"
+                          >
+                            เชื่อมต่อ LINE (เร็วๆ นี้)
+                          </button>
                           
                           <button
                             onClick={() =>
@@ -918,26 +902,43 @@ const CareTeam = () => {
             </div>
           )}
 
-          {/* Success Note about LINE */}
+          {/* Success Note about Email */}
           <div className="mt-8 p-4 bg-green-50 border border-green-200 rounded-lg">
             <div className="flex items-start">
               <svg className="w-5 h-5 text-green-600 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <div className="text-sm text-green-800">
-                <p className="font-semibold mb-2">✅ ระบบแจ้งเตือน LINE พร้อมใช้งานแล้ว!</p>
+                <p className="font-semibold mb-2">✅ ระบบแจ้งเตือน Email พร้อมใช้งานแล้ว!</p>
                 <ul className="list-disc list-inside space-y-1 text-xs">
                   <li>Firebase Functions ได้ Deploy สำเร็จแล้ว</li>
-                  <li>LINE Official Account พร้อมรับการเชื่อมต่อ</li>
-                  <li>สมาชิกสามารถเพิ่มเพื่อนและขอ LINE User ID ได้แล้ว</li>
-                  <li>ระบบจะส่งการแจ้งเตือนผ่าน Email และ LINE Message แบบทันที</li>
+                  <li>Email Service พร้อมส่งการแจ้งเตือน</li>
+                  <li>ระบบจะส่งการแจ้งเตือนผ่าน Email แบบทันที</li>
                   <li>ทดสอบการแจ้งเตือนได้ด้วยปุ่ม "ทดสอบการแจ้งเตือน"</li>
                 </ul>
                 <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded">
                   <p className="text-xs text-blue-800">
-                    <strong>วิธีใช้:</strong> คลิก "เชื่อมต่อ LINE" → สแกน QR Code → ส่ง "myid" → กรอก User ID
+                    <strong>วิธีใช้:</strong> เพิ่มสมาชิก → เปิดใช้งานการแจ้งเตือนอีเมล → ทดสอบระบบ
                   </p>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Future LINE Feature Note */}
+          <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <div className="flex items-start">
+              <svg className="w-5 h-5 text-yellow-600 mr-3 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="text-sm text-yellow-800">
+                <p className="font-semibold mb-2">🔄 การแจ้งเตือนผ่าน LINE กำลังพัฒนา</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>LINE Bot และ Webhook ได้เตรียมไว้แล้ว</li>
+                  <li>QR Code สำหรับเชื่อมต่อพร้อมใช้งาน</li>
+                  <li>จะเปิดใช้งานเร็วๆ นี้หลังจาก Email ทำงานเสถียร</li>
+                  <li>ฟีเจอร์ทั้งหมดได้รักษาไว้สำหรับอนาคต</li>
+                </ul>
               </div>
             </div>
           </div>

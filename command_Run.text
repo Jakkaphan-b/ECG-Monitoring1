@@ -1,0 +1,16 @@
+1. รัน Frontend (หลัก)
+npm install
+npm run dev
+
+2. รัน Firebase Functions (ถ้าต้องการ)
+cd functions
+npm install
+firebase emulators:start --only functions
+
+หรือถ้า deploy แล้วให้ใช้:
+firebase deploy --only functions
+
+3. รัน LINE Bot Test Server (ถ้าต้องการทดสอบ)
+cd line-bot-test
+npm install
+npm start

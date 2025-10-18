@@ -26,7 +26,7 @@
 ### 4. อัปเดต Environment Variables
 ```bash
 # ใน functions/.env
-LINE_CHANNEL_ACCESS_TOKEN=your_long_lived_access_token_here
+LINE_CHANNEL_ACCESS_TOKEN=hODJs62TAuiecxqstK4Kmp/0/REW/1Nu+x4C4mgcGZOJ0b4ZrUQe4xI1Ncjc5hHbb7LzDLHTOJbEQh6OMgILdBS5rdiUZiErcdd06pEzvBlWjnw/QqFgeGpsE9Pu+jQCKSPFRmGHBtz4y21w6oO6IQdB04t89/1O/w1cDnyilFU=
 LINE_CHANNEL_SECRET=4ff6439c509cac60341e8c678683395f
 EMAIL_USER=your-gmail@gmail.com
 EMAIL_PASSWORD=your-app-password
