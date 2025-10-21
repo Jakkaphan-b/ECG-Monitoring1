@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";   // ✅ เพิ่มบรรทัดนี้
 import { getAuth } from "firebase/auth";              // ✅ เพิ่มบรรทัดนี้
+import { getDatabase } from "firebase/database";      // ✅ เพิ่มสำหรับ Realtime Database
 // import { getAnalytics } from "firebase/analytics"; // (ถ้าไม่ได้ใช้ analytics ก็ไม่ต้องเปิด)
 
 // Your web app's Firebase configuration
@@ -18,6 +19,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Export Firestore and Auth
+// Export Firestore, Auth และ Realtime Database
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const rtdb = getDatabase(app);  // ✅ เพิ่มสำหรับ Realtime Database

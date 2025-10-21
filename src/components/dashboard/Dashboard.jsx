@@ -3,6 +3,7 @@ import { auth, db } from '../../firebase';
 import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
+import ECGChart from '../charts/ECGChart';
 
 const Dashboard = () => {
   const [user, setUser] = useState(null);
@@ -101,6 +102,11 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* ECG Real-time Chart */}
+        <div className="mb-8">
+          <ECGChart />
+        </div>
+
         {/* Status Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow p-6">
