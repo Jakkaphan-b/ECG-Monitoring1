@@ -1,169 +1,281 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase';
-import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { useNavigate } from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { ecgService } from '../../services/ecgService';
 import ECGChart from '../charts/ECGChart';
+import { useNavigate } from 'react-router-dom';
 
 const Dashboard = () => {
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
   const [ecgData, setEcgData] = useState([]);
-  const [deviceStatus, setDeviceStatus] = useState({
-    online: false,
-    rssi: null,
-    battery: null,
-    lastUpdate: null
-  });
-  const [heartRate, setHeartRate] = useState({
-    current: 0,
-    status: 'Normal'
-  });
+  const [deviceStatus, setDeviceStatus] = useState(null);
+  const [deviceId, setDeviceId] = useState(null);
+  const [heartRate, setHeartRate] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        if (userDoc.exists()) {
-          setUserData(userDoc.data());
-        }
-        
-        // Set up real-time ECG data listener
-        const ecgQuery = query(
-          collection(db, 'ecg_data'),
-          where('user_id', '==', currentUser.uid),
-          orderBy('timestamp', 'desc'),
-          limit(100)
-        );
-        
-        const unsubscribeEcg = onSnapshot(ecgQuery, (snapshot) => {
-          const data = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          setEcgData(data);
-          
-          if (data.length > 0) {
-            const latest = data[0];
-            setHeartRate({
-              current: latest.heart_rate || 0,
-              status: getHeartRateStatus(latest.heart_rate)
-            });
-            
-            setDeviceStatus({
-              online: (new Date() - new Date(latest.timestamp)) < 30000,
-              rssi: latest.rssi,
-              battery: latest.battery,
-              lastUpdate: latest.timestamp
-            });
-          }
-        });
-        
-        return () => unsubscribeEcg();
-      } else {
-        navigate('/');
+    loadDeviceConfig();
+    return () => {
+      if (deviceId) {
+        ecgService.stopListening(deviceId);
       }
-    });
+    };
+  }, []);
 
-    return () => unsubscribe();
-  }, [navigate]);
+  useEffect(() => {
+    if (deviceId) {
+      startECGMonitoring();
+    }
+  }, [deviceId]);
 
-  const getHeartRateStatus = (bpm) => {
-    if (!bpm) return 'No Data';
-    if (bpm < 60) return 'Bradycardia';
-    if (bpm > 100) return 'Tachycardia';
-    if (bpm > 150) return 'Suspected AF';
-    return 'Normal';
-  };
+  useEffect(() => {
+    // วิเคราะห์ heart rate ทุกครั้งที่มีข้อมูลใหม่
+    if (ecgData.length > 0) {
+      const hr = ecgService.analyzeHeartRate(ecgData);
+      setHeartRate(hr);
+    }
+  }, [ecgData]);
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'Normal': return 'text-green-600 bg-green-100';
-      case 'Bradycardia': return 'text-yellow-600 bg-yellow-100';
-      case 'Tachycardia': return 'text-orange-600 bg-orange-100';
-      case 'Suspected AF': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
+  const loadDeviceConfig = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      navigate('/auth');
+      return;
+    }
+
+    try {
+      const docRef = doc(db, 'devices', user.uid);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.device_id) {
+          setDeviceId(data.device_id);
+        } else {
+          navigate('/device-setup');
+        }
+      } else {
+        navigate('/device-setup');
+      }
+    } catch (error) {
+      console.error('Error loading device config:', error);
+      navigate('/device-setup');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  if (!user || !userData) {
+  const startECGMonitoring = () => {
+    // ฟัง ECG data
+    ecgService.startListening(deviceId, (data) => {
+      setEcgData(data);
+    });
+
+    // ฟัง device status
+    ecgService.listenToDeviceStatus(deviceId, (status) => {
+      setDeviceStatus(status);
+    });
+  };
+
+  const getConnectionStatus = () => {
+    if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
+    if (deviceStatus.connected) return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
+    return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
+  };
+
+  const getHeartRateStatus = () => {
+    if (!heartRate || !heartRate.bpm) return { icon: '💔', text: 'ไม่พบสัญญาณ', color: 'text-gray-500' };
+    
+    const bpm = heartRate.bpm;
+    if (bpm < 60) return { icon: '💙', text: 'ต่ำกว่าปกติ', color: 'text-blue-600' };
+    if (bpm > 100) return { icon: '❤️', text: 'สูงกว่าปกติ', color: 'text-red-600' };
+    return { icon: '💚', text: 'ปกติ', color: 'text-green-600' };
+  };
+
+  // สร้าง demo data สำหรับทดสอบ
+  const generateDemoData = () => {
+    const demoData = ecgService.generateDummyECGData();
+    setEcgData(demoData);
+    
+    // จำลอง device status
+    setDeviceStatus({
+      connected: true,
+      rssi: -45,
+      battery: '85%',
+      firmware_version: '1.0.0',
+      last_seen: Date.now()
+    });
+  };
+
+  if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">กำลังโหลด...</p>
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">กำลังโหลด...</p>
         </div>
       </div>
     );
   }
 
+  const connectionStatus = getConnectionStatus();
+  const hrStatus = getHeartRateStatus();
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* ECG Real-time Chart */}
-        <div className="mb-8">
-          <ECGChart />
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4">
+        {/* Header */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">
+                📊 ECG Dashboard
+              </h1>
+              <p className="text-gray-600">Device: {deviceId || 'Not configured'}</p>
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={generateDemoData}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+              >
+                🧪 Demo Data
+              </button>
+              <button
+                onClick={() => navigate('/device-setup')}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                ⚙️ ตั้งค่าอุปกรณ์
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Status Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+          {/* Connection Status */}
           <div className="bg-white rounded-lg shadow p-6">
             <div className="flex items-center">
-              <div className={`w-3 h-3 rounded-full ${deviceStatus.online ? 'bg-green-500' : 'bg-red-500'} mr-3`}></div>
+              <span className="text-3xl mr-3">{connectionStatus.icon}</span>
               <div>
-                <p className="text-sm font-medium text-gray-600">สถานะอุปกรณ์</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {deviceStatus.online ? 'Online' : 'Offline'}
+                <p className="text-sm text-gray-600">สถานะการเชื่อมต่อ</p>
+                <p className={`font-semibold ${connectionStatus.color}`}>
+                  {connectionStatus.text}
                 </p>
               </div>
             </div>
           </div>
 
+          {/* Heart Rate */}
           <div className="bg-white rounded-lg shadow p-6">
-            <div>
-              <p className="text-sm font-medium text-gray-600">อัตราการเต้นหัวใจ</p>
-              <p className="text-2xl font-bold text-gray-900">{heartRate.current} BPM</p>
-              <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(heartRate.status)}`}>
-                {heartRate.status}
-              </span>
+            <div className="flex items-center">
+              <span className="text-3xl mr-3">{hrStatus.icon}</span>
+              <div>
+                <p className="text-sm text-gray-600">อัตราการเต้นหัวใจ</p>
+                <p className={`text-2xl font-bold ${hrStatus.color}`}>
+                  {heartRate?.bpm || '--'}
+                  {heartRate?.bpm && <span className="text-sm ml-1">BPM</span>}
+                </p>
+              </div>
             </div>
           </div>
 
+          {/* Signal Quality */}
           <div className="bg-white rounded-lg shadow p-6">
-            <div>
-              <p className="text-sm font-medium text-gray-600">LINE Notify</p>
-              <p className="text-lg font-semibold text-gray-900">เชื่อมต่อแล้ว</p>
+            <div className="flex items-center">
+              <span className="text-3xl mr-3">📶</span>
+              <div>
+                <p className="text-sm text-gray-600">คุณภาพสัญญาณ</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {deviceStatus?.rssi || '--'}
+                  {deviceStatus?.rssi && <span className="text-sm ml-1">dBm</span>}
+                </p>
+              </div>
             </div>
           </div>
 
+          {/* Data Points */}
           <div className="bg-white rounded-lg shadow p-6">
-            <div>
-              <p className="text-sm font-medium text-gray-600">ข้อมูลล่าสุด</p>
-              <p className="text-lg font-semibold text-gray-900">
-                {deviceStatus.lastUpdate ? 
-                  new Date(deviceStatus.lastUpdate).toLocaleTimeString('th-TH') : 
-                  'ไม่มีข้อมูล'
-                }
-              </p>
+            <div className="flex items-center">
+              <span className="text-3xl mr-3">📈</span>
+              <div>
+                <p className="text-sm text-gray-600">ข้อมูลที่ได้รับ</p>
+                <p className="text-2xl font-bold text-purple-600">
+                  {ecgData.length.toLocaleString()}
+                </p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* ECG Chart Placeholder */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">กราฟ ECG แบบเรียลไทม์</h2>
-          <div className="h-64 bg-gray-100 rounded-lg flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-6xl mb-4">📈</div>
-              <p className="text-gray-600">กราฟ ECG จะแสดงที่นี่</p>
-              <p className="text-sm text-gray-500 mt-2">
-                {ecgData.length > 0 ? `มีข้อมูล ${ecgData.length} จุด` : 'ยังไม่มีข้อมูล ECG'}
-              </p>
+        {/* ECG Chart */}
+        <div className="mb-6">
+          <ECGChart 
+            data={ecgData} 
+            width={1000} 
+            height={400}
+            showGrid={true}
+          />
+        </div>
+
+        {/* Detailed Analysis */}
+        {heartRate && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              📋 การวิเคราะห์ที่ละเอียด
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="text-center">
+                <p className="text-3xl font-bold text-blue-600">{heartRate.bpm}</p>
+                <p className="text-sm text-gray-600">BPM</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-green-600">{heartRate.peaks}</p>
+                <p className="text-sm text-gray-600">R-peaks detected</p>
+              </div>
+              <div className="text-center">
+                <p className="text-3xl font-bold text-purple-600">{Math.round(heartRate.confidence)}%</p>
+                <p className="text-sm text-gray-600">Confidence</p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+
+        {/* Device Info */}
+        {deviceStatus && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              🔧 ข้อมูลอุปกรณ์
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <p className="text-sm text-gray-600">Firmware</p>
+                <p className="font-medium">{deviceStatus.firmware_version || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Battery</p>
+                <p className="font-medium">{deviceStatus.battery || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Last Seen</p>
+                <p className="font-medium">
+                  {deviceStatus.last_seen ? 
+                    new Date(deviceStatus.last_seen).toLocaleString() : 
+                    'N/A'
+                  }
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Uptime</p>
+                <p className="font-medium">
+                  {deviceStatus.last_seen ? 
+                    Math.round((Date.now() - deviceStatus.last_seen) / 1000) + 's ago' : 
+                    'N/A'
+                  }
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -186,15 +298,15 @@ const Dashboard = () => {
           </button>
 
           <button
-            onClick={() => navigate('/device-setup')}
+            onClick={() => navigate('/care')}
             className="bg-green-600 hover:bg-green-700 text-white p-6 rounded-lg shadow text-left"
           >
-            <div className="text-2xl mb-2">⚙️</div>
-            <h3 className="text-lg font-semibold">ตั้งค่าอุปกรณ์</h3>
-            <p className="text-sm opacity-90">จับคู่และตั้งค่า ESP32 + AD8232</p>
+            <div className="text-2xl mb-2">👨‍⚕️</div>
+            <h3 className="text-lg font-semibold">ทีมดูแลสุขภาพ</h3>
+            <p className="text-sm opacity-90">เชื่อมต่อกับแพทย์และผู้ดูแล</p>
           </button>
         </div>
-      </main>
+      </div>
     </div>
   );
 };

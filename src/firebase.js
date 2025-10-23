@@ -13,7 +13,8 @@ const firebaseConfig = {
   storageBucket: "ecg-monitor-f1fcb.firebasestorage.app",
   messagingSenderId: "294890917162",
   appId: "1:294890917162:web:ce9f81fe7b2f244403e253",
-  measurementId: "G-CE0G11XXLW"
+  measurementId: "G-CE0G11XXLW",
+  databaseURL: "https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com" // 👈 เพิ่มบรรทัดนี้
 };
 
 // Initialize Firebase

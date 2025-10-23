@@ -1,255 +1,172 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { rtdb, auth, db } from '../../firebase';
-import { ref, onValue, off } from 'firebase/database';
-import { doc, getDoc } from 'firebase/firestore';
+import React, { useRef, useEffect, useState } from 'react';
 
-const ECGChart = () => {
+const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => {
   const canvasRef = useRef(null);
-  const [ecgData, setEcgData] = useState([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const [deviceId, setDeviceId] = useState('');
-  const [sampleRate, setSampleRate] = useState(250);
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [peaks, setPeaks] = useState([]);
 
   useEffect(() => {
-    loadDeviceId();
-  }, []);
+    drawChart();
+  }, [data, width, height]);
 
-  const loadDeviceId = async () => {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    try {
-      const docRef = doc(db, 'devices', user.uid);
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.device_id) {
-          setDeviceId(data.device_id);
-          setupListeners(data.device_id);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading device ID:', error);
-    }
-  };
-
-  const setupListeners = (deviceId) => {
-    // Listen to ECG chunks
-    const chunksRef = ref(rtdb, `ecg_stream/${deviceId}/chunks`);
-    const statusRef = ref(rtdb, `ecg_stream/${deviceId}/status`);
-
-    const chunksListener = onValue(chunksRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        if (data.values) {
-          setSampleRate(data.sampleRate || 250);
-          setLastUpdate(new Date().toLocaleTimeString());
-          setEcgData(prev => {
-            const newData = [...prev, ...data.values];
-            return newData.slice(-1000); // Keep last 1000 samples
-          });
-        }
-      }
-    });
-
-    const statusListener = onValue(statusRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        setIsConnected(data.connected || false);
-      }
-    });
-
-    return () => {
-      off(chunksRef, 'value', chunksListener);
-      off(statusRef, 'value', statusListener);
-    };
-  };
-
-  useEffect(() => {
-    drawECG();
-  }, [ecgData]);
-
-  const drawECG = () => {
+  const drawChart = () => {
     const canvas = canvasRef.current;
-    if (!canvas || ecgData.length === 0) return;
+    if (!canvas || !data.length) return;
 
     const ctx = canvas.getContext('2d');
-    const { width, height } = canvas;
+    const { width: canvasWidth, height: canvasHeight } = canvas;
 
     // Clear canvas
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, width, height);
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    // Setup
+    const padding = 40;
+    const chartWidth = canvasWidth - (padding * 2);
+    const chartHeight = canvasHeight - (padding * 2);
+
+    // Calculate data range
+    const timeRange = data.length > 0 ? {
+      min: data[0].x,
+      max: data[data.length - 1].x
+    } : { min: 0, max: 1 };
+
+    const voltageRange = data.reduce((range, point) => ({
+      min: Math.min(range.min, point.y),
+      max: Math.max(range.max, point.y)
+    }), { min: Infinity, max: -Infinity });
+
+    // Add some padding to voltage range
+    const voltagePadding = Math.max(0.1, (voltageRange.max - voltageRange.min) * 0.1);
+    voltageRange.min -= voltagePadding;
+    voltageRange.max += voltagePadding;
 
     // Draw grid
-    drawGrid(ctx, width, height);
+    if (showGrid) {
+      drawGrid(ctx, padding, chartWidth, chartHeight, timeRange, voltageRange);
+    }
 
     // Draw ECG waveform
-    drawWaveform(ctx, width, height);
+    drawECGWaveform(ctx, data, padding, chartWidth, chartHeight, timeRange, voltageRange);
+
+    // Draw axes
+    drawAxes(ctx, padding, chartWidth, chartHeight, timeRange, voltageRange);
   };
 
-  const drawGrid = (ctx, width, height) => {
-    ctx.strokeStyle = '#0f4c3a';
+  const drawGrid = (ctx, padding, chartWidth, chartHeight, timeRange, voltageRange) => {
+    ctx.strokeStyle = '#e5e7eb';
     ctx.lineWidth = 1;
 
-    // Vertical lines (time)
-    const timeStep = width / 20;
-    for (let x = 0; x <= width; x += timeStep) {
+    // Vertical grid lines (time)
+    for (let i = 0; i <= 10; i++) {
+      const x = padding + (i * chartWidth / 10);
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
+      ctx.moveTo(x, padding);
+      ctx.lineTo(x, padding + chartHeight);
       ctx.stroke();
     }
 
-    // Horizontal lines (amplitude)
-    const ampStep = height / 10;
-    for (let y = 0; y <= height; y += ampStep) {
+    // Horizontal grid lines (voltage)
+    for (let i = 0; i <= 8; i++) {
+      const y = padding + (i * chartHeight / 8);
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
+      ctx.moveTo(padding, y);
+      ctx.lineTo(padding + chartWidth, y);
       ctx.stroke();
     }
-
-    // Center line
-    ctx.strokeStyle = '#0f6b4a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
-    ctx.stroke();
   };
 
-  const drawWaveform = (ctx, width, height) => {
-    if (ecgData.length < 2) return;
+  const drawECGWaveform = (ctx, data, padding, chartWidth, chartHeight, timeRange, voltageRange) => {
+    if (data.length < 2) return;
 
-    ctx.strokeStyle = '#00ff41';
+    ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 2;
     ctx.beginPath();
 
-    const dataToShow = Math.min(ecgData.length, Math.floor(width * 2));
-    const startIdx = Math.max(0, ecgData.length - dataToShow);
-    
-    for (let i = 0; i < dataToShow && (startIdx + i) < ecgData.length; i++) {
-      const x = (i / dataToShow) * width;
-      // Normalize ADC value (0-4095) to canvas height
-      const normalizedValue = (ecgData[startIdx + i] - 2048) / 2048; // Center around 0
-      const y = height / 2 - (normalizedValue * height / 4); // Scale to 1/4 of height
+    data.forEach((point, index) => {
+      const x = padding + ((point.x - timeRange.min) / (timeRange.max - timeRange.min)) * chartWidth;
+      const y = padding + ((voltageRange.max - point.y) / (voltageRange.max - voltageRange.min)) * chartHeight;
 
-      if (i === 0) {
+      if (index === 0) {
         ctx.moveTo(x, y);
       } else {
         ctx.lineTo(x, y);
       }
-    }
+    });
+
     ctx.stroke();
+
+    // Draw peaks if any
+    peaks.forEach(peak => {
+      const x = padding + ((peak.x - timeRange.min) / (timeRange.max - timeRange.min)) * chartWidth;
+      const y = padding + ((voltageRange.max - peak.y) / (voltageRange.max - voltageRange.min)) * chartHeight;
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
   };
 
-  const handleCanvasResize = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.parentElement.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    drawECG();
-  };
+  const drawAxes = (ctx, padding, chartWidth, chartHeight, timeRange, voltageRange) => {
+    ctx.strokeStyle = '#374151';
+    ctx.lineWidth = 2;
 
-  useEffect(() => {
-    const resizeHandler = () => {
-      setTimeout(handleCanvasResize, 100); // Small delay to ensure parent has resized
-    };
-    
-    handleCanvasResize();
-    window.addEventListener('resize', resizeHandler);
-    return () => window.removeEventListener('resize', resizeHandler);
-  }, []);
+    // X-axis
+    ctx.beginPath();
+    ctx.moveTo(padding, padding + chartHeight);
+    ctx.lineTo(padding + chartWidth, padding + chartHeight);
+    ctx.stroke();
 
-  // Calculate heart rate estimate (simple peak detection)
-  const getHeartRate = () => {
-    if (ecgData.length < sampleRate) return '--';
-    
-    const recentData = ecgData.slice(-sampleRate); // Last 1 second
-    const threshold = Math.max(...recentData) * 0.7;
-    let peaks = 0;
-    
-    for (let i = 1; i < recentData.length - 1; i++) {
-      if (recentData[i] > threshold && 
-          recentData[i] > recentData[i-1] && 
-          recentData[i] > recentData[i+1]) {
-        peaks++;
-      }
+    // Y-axis
+    ctx.beginPath();
+    ctx.moveTo(padding, padding);
+    ctx.lineTo(padding, padding + chartHeight);
+    ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = '#374151';
+    ctx.font = '12px Inter, sans-serif';
+    ctx.textAlign = 'center';
+
+    // Y-axis labels (voltage)
+    for (let i = 0; i <= 4; i++) {
+      const voltage = voltageRange.min + ((voltageRange.max - voltageRange.min) * i / 4);
+      const y = padding + chartHeight - (i * chartHeight / 4);
+      ctx.fillText(voltage.toFixed(2) + 'V', padding - 20, y + 4);
     }
+
+    // X-axis label
+    ctx.fillText('Time', padding + chartWidth / 2, padding + chartHeight + 35);
     
-    return peaks * 60; // Convert to BPM (assuming 1 second of data)
+    // Y-axis label
+    ctx.save();
+    ctx.translate(15, padding + chartHeight / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('Voltage (V)', 0, 0);
+    ctx.restore();
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold text-gray-900">ECG Real-time Monitor</h2>
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center">
-            <div className={`w-3 h-3 rounded-full mr-2 ${
-              isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-            }`}></div>
-            <span className="text-sm font-medium">
-              {isConnected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
-          <div className="text-sm text-gray-600">
-            {sampleRate} Hz • {ecgData.length} samples
-          </div>
-          {lastUpdate && (
-            <div className="text-xs text-gray-500">
-              Updated: {lastUpdate}
-            </div>
-          )}
+    <div className="bg-white rounded-lg border p-4">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          ❤️ ECG Real-time Monitor
+        </h3>
+        <div className="flex items-center space-x-4 text-sm text-gray-600">
+          <span>📊 {data.length} samples</span>
+          <span>📡 {data.length > 0 ? '🟢 Live' : '🔴 No Signal'}</span>
         </div>
       </div>
       
-      <div className="relative bg-black rounded-lg p-4" style={{ height: '300px' }}>
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full"
-          style={{ width: '100%', height: '100%' }}
-        />
-        {!isConnected && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-gray-500 text-center">
-              <div className="text-4xl mb-2">📱</div>
-              <div className="text-white">รอการเชื่อมต่ออุปกรณ์...</div>
-              <div className="text-sm mt-1 text-gray-400">Device ID: {deviceId}</div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <div className="text-2xl font-bold text-red-600">
-            {isConnected ? getHeartRate() : '--'}
-          </div>
-          <div className="text-sm text-gray-600">Heart Rate (BPM)</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <div className="text-2xl font-bold text-green-600">
-            {isConnected ? '❤️' : '💔'}
-          </div>
-          <div className="text-sm text-gray-600">Heart Status</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <div className="text-2xl font-bold text-blue-600">
-            {ecgData.length > 0 ? Math.round(ecgData[ecgData.length - 1]) : '--'}
-          </div>
-          <div className="text-sm text-gray-600">Current Value</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-3 text-center">
-          <div className="text-2xl font-bold text-purple-600">
-            {sampleRate}
-          </div>
-          <div className="text-sm text-gray-600">Sample Rate (Hz)</div>
-        </div>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        className="w-full border rounded"
+        style={{ maxWidth: '100%', height: 'auto' }}
+      />
+      
+      <div className="mt-2 text-xs text-gray-500 text-center">
+        Real-time ECG waveform visualization
       </div>
     </div>
   );

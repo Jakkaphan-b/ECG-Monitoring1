@@ -95,7 +95,7 @@ app.post('/api/send-test-email', async (req, res) => {
 
           <!-- Success Message -->
           <div style="background: linear-gradient(135deg, #dcfce7, #bbf7d0); border: 1px solid #86efac; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
-            <h3 style="color: #166534; margin: 0 0 10px 0;">❤️❤️ รักนะคับ จุ๊ปๆ!</h3>
+            <h3 style="color: #166534; margin: 0 0 10px 0;">🎉 การทดสอบสำเร็จ!</h3>
             <p style="color: #166534; margin: 0; line-height: 1.6;">
               หากท่านได้รับอีเมลนี้ แสดงว่าระบบแจ้งเตือน ECG Monitoring ทำงานได้ถูกต้อง 
               ในกรณีที่มีภาวะฉุกเฉิน ระบบจะส่งการแจ้งเตือนโดยอัตโนมัติ
