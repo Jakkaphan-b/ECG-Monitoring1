@@ -78,10 +78,22 @@ const Dashboard = () => {
   };
 
   const getConnectionStatus = () => {
-    if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
-    if (deviceStatus.connected) return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
+  if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
+
+  const now = Date.now();
+  const lastSeen = deviceStatus.last_seen || 0;
+  const timeout = 10000; // 10 วินาที (ปรับได้ตามต้องการ)
+
+  if (now - lastSeen > timeout) {
     return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
-  };
+  }
+
+  if (deviceStatus.connected) {
+    return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
+  }
+
+  return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
+ };
 
   const getHeartRateStatus = () => {
     if (!heartRate || !heartRate.bpm) return { icon: '💔', text: 'ไม่พบสัญญาณ', color: 'text-gray-500' };

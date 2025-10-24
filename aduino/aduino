@@ -1,0 +1,1306 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <WiFiManager.h>
+#include "SPIFFS.h"
+#include <WebServer.h>
+#include <time.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SH110X.h>
+
+// WiFi credentials will be loaded from SPIFFS - no hardcoded values needed
+String wifi_ssid = "";
+String wifi_pass = "";
+
+WebServer configServer(80);
+
+// OLED Display Configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
+#define USE_SH1106
+#define OLED_SDA 21
+#define OLED_SCL 22
+#define OLED_RESET -1
+
+Adafruit_SH1106G display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+// แนะนำโดเมนใหม่ (ถ้า Project ของคุณแสดง region เป็น asia-southeast1 ให้ใช้แบบนั้น)
+// ตัวอย่าง: "https://ecg-monitor-f1fcb-asia-southeast1.firebasedatabase.app"
+// ถ้าคุณยังใช้ default-rtdb: ให้ใช้ "https://ecg-monitor-f1fcb-default-rtdb.asia-southeast1.firebasedatabase.app"
+const char* RTDB_HOST = "https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com"; 
+const char* DEVICE_ID  = "ECG_001";
+
+// File to store WiFi credentials
+const char* WIFI_CONFIG_PATH = "/wifi_config.json";
+
+WiFiManager wifiManager;
+
+// Custom HTML page for WiFi configuration
+const char* config_html = R"rawliteral(
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECG Monitor - WiFi Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .status {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        
+        .networks {
+            margin-bottom: 25px;
+        }
+        
+        .networks h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .network-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background: #f8f9fa;
+        }
+        
+        .network-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .network-item:last-child {
+            border-bottom: none;
+        }
+        
+        .network-item:hover {
+            background: #e9ecef;
+        }
+        
+        .network-item.selected {
+            background: #007bff;
+            color: white;
+        }
+        
+        .network-info {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .network-ssid {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .network-details {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        .signal-strength {
+            display: flex;
+            align-items: center;
+        }
+        
+        .signal-bar {
+            width: 4px;
+            background: #ddd;
+            margin-left: 2px;
+            border-radius: 2px;
+        }
+        
+        .signal-bar.active {
+            background: #28a745;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,123,255,0.3);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .device-info {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 25px;
+            font-size: 0.9em;
+            color: #1565c0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🫀 ECG Monitor</h1>
+            <div class="subtitle">WiFi Configuration</div>
+        </div>
+        
+        <div class="device-info">
+            <strong>Device:</strong> ECG_Device<br>
+            <strong>Status:</strong> Waiting for WiFi configuration<br>
+            <strong>IP:</strong> <span id="device-ip">192.168.4.1</span>
+        </div>
+        
+        <div class="status" id="status">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Scanning networks...</div>
+            </div>
+            <div id="scan-status">Click "Scan Networks" to find available WiFi networks</div>
+        </div>
+        
+        <div class="networks">
+            <h3>📶 Available Networks</h3>
+            <div class="network-list" id="network-list">
+                <div style="padding: 20px; text-align: center; color: #666;">
+                    No networks scanned yet
+                </div>
+            </div>
+        </div>
+        
+        <form id="wifi-form">
+            <div class="form-group">
+                <label for="ssid">🌐 Network Name (SSID)</label>
+                <input type="text" id="ssid" name="ssid" placeholder="Enter WiFi network name" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">🔒 Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter WiFi password">
+            </div>
+            
+            <button type="button" class="btn btn-secondary" onclick="scanNetworks()">
+                📡 Scan Networks
+            </button>
+            
+            <button type="submit" class="btn btn-primary">
+                💾 Save & Connect
+            </button>
+        </form>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        let networks = [];
+        let selectedNetwork = null;
+        
+        async function scanNetworks() {
+            const loading = document.getElementById('loading');
+            const scanStatus = document.getElementById('scan-status');
+            const networkList = document.getElementById('network-list');
+            
+            loading.style.display = 'block';
+            scanStatus.style.display = 'none';
+            
+            try {
+                const response = await fetch('/scan');
+                const data = await response.json();
+                networks = data;
+                
+                if (networks.length === 0) {
+                    networkList.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No networks found</div>';
+                } else {
+                    displayNetworks(networks);
+                }
+                
+                scanStatus.innerHTML = `Found ${networks.length} network(s)`;
+                scanStatus.style.display = 'block';
+                
+            } catch (error) {
+                console.error('Scan failed:', error);
+                scanStatus.innerHTML = 'Scan failed. Please try again.';
+                scanStatus.style.display = 'block';
+                networkList.innerHTML = '<div style="padding: 20px; text-align: center; color: #dc3545;">Error scanning networks</div>';
+            }
+            
+            loading.style.display = 'none';
+        }
+        
+        function displayNetworks(networks) {
+            const networkList = document.getElementById('network-list');
+            networkList.innerHTML = '';
+            
+            networks.forEach((network, index) => {
+                const item = document.createElement('div');
+                item.className = 'network-item';
+                item.onclick = () => selectNetwork(network, item);
+                
+                const signalBars = getSignalBars(network.r);
+                const securityIcon = network.e ? '🔒' : '🔓';
+                
+                item.innerHTML = `
+                    <div class="network-info">
+                        <div class="network-ssid">${securityIcon} ${network.s}</div>
+                        <div class="network-details">Signal: ${network.r} dBm • ${network.e ? 'Secured' : 'Open'}</div>
+                    </div>
+                    <div class="signal-strength">
+                        ${signalBars}
+                    </div>
+                `;
+                
+                networkList.appendChild(item);
+            });
+        }
+        
+        function getSignalBars(rssi) {
+            const bars = [];
+            const levels = [4, 3, 2, 1]; // Signal strength levels
+            const thresholds = [-50, -60, -70, -80]; // RSSI thresholds
+            
+            let activeLevel = 0;
+            for (let i = 0; i < thresholds.length; i++) {
+                if (rssi >= thresholds[i]) {
+                    activeLevel = levels[i];
+                    break;
+                }
+            }
+            
+            for (let i = 1; i <= 4; i++) {
+                const height = i * 5 + 5;
+                const active = i <= activeLevel ? 'active' : '';
+                bars.push(`<div class="signal-bar ${active}" style="height: ${height}px;"></div>`);
+            }
+            
+            return bars.join('');
+        }
+        
+        function selectNetwork(network, element) {
+            // Remove previous selection
+            document.querySelectorAll('.network-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            // Select current network
+            element.classList.add('selected');
+            selectedNetwork = network;
+            
+            // Fill SSID field
+            document.getElementById('ssid').value = network.s;
+            
+            // Clear password field for new selection
+            document.getElementById('password').value = '';
+        }
+        
+        document.getElementById('wifi-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const ssid = document.getElementById('ssid').value;
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('result');
+            
+            if (!ssid) {
+                showAlert('Please enter a network name (SSID)', 'error');
+                return;
+            }
+            
+            showAlert('Saving configuration and connecting...', 'info');
+            
+            try {
+                const formData = new URLSearchParams();
+                formData.append('ssid', ssid);
+                formData.append('pass', password);
+                
+                const response = await fetch('/save', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formData
+                });
+                
+                const result = await response.text();
+                
+                if (response.ok) {
+                    showAlert('✅ Configuration saved successfully! The device will restart and connect to WiFi.', 'success');
+                    setTimeout(() => {
+                        showAlert('🔄 Device is restarting... You can close this page.', 'info');
+                    }, 2000);
+                } else {
+                    showAlert(`❌ Error: ${result}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Save failed:', error);
+                showAlert('❌ Failed to save configuration. Please try again.', 'error');
+            }
+        });
+        
+        function showAlert(message, type) {
+            const resultDiv = document.getElementById('result');
+            const alertClass = type === 'error' ? 'alert-error' : (type === 'success' ? 'alert-success' : 'alert-info');
+            
+            resultDiv.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    resultDiv.innerHTML = '';
+                }, 10000);
+            }
+        }
+        
+        // Auto-scan on page load
+        window.onload = () => {
+            setTimeout(scanNetworks, 1000);
+        };
+    </script>
+</body>
+</html>
+)rawliteral";
+
+String chunksUrl() { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/chunks.json"; }
+String statusUrl() { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/status.json"; }
+
+const int ECG_PIN = 34;       // ADC1
+#define SAMPLE_RATE 250       // Hz
+#define CHUNK_SIZE  50        // ส่งทุก ~200ms
+
+int buf[CHUNK_SIZE];
+int idxBuf = 0;
+unsigned long lastStatus = 0;
+
+// Heart Rate Detection Variables
+#define HR_WINDOW_SIZE 8
+#define ECG_THRESHOLD 2000    // Threshold สำหรับตรวจจับ R-peak
+#define MIN_RR_INTERVAL 300   // ช่วง RR ต่ำสุด (ms) = 200 BPM max
+#define MAX_RR_INTERVAL 2000  // ช่วง RR สูงสุด (ms) = 30 BPM min
+
+int hrBuffer[HR_WINDOW_SIZE];
+int hrIndex = 0;
+int currentHeartRate = 0;
+bool peakDetected = false;
+int lastPeakValue = 0;
+unsigned long lastPeakTime = 0;
+unsigned long lastRRInterval = 0;
+
+// ใช้ client แบบ secure สำหรับ HTTPS
+WiFiClientSecure secureClient;
+
+// ฟังก์ชันเสริมสำหรับการแสดงเวลาและ timestamp
+void printCurrentTime() {
+  time_t now = time(nullptr);
+  unsigned long timestamp_ms = (unsigned long)now * 1000;
+  Serial.println("Current time: " + String(ctime(&now)));
+  Serial.println("Timestamp (ms): " + String(timestamp_ms));
+}
+
+// ฟังก์ชันตรวจจับ R-peak และคำนวณ Heart Rate
+void detectRPeakAndCalculateHR(int ecgValue) {
+  static int previousValue = 0;
+  static int previousPreviousValue = 0;
+  unsigned long currentTime = millis();
+  
+  // ตรวจจับ R-peak (จุดสูงสุดที่มีค่าเกิน threshold)
+  if (ecgValue > ECG_THRESHOLD && 
+      ecgValue > previousValue && 
+      previousValue > previousPreviousValue && 
+      !peakDetected &&
+      (currentTime - lastPeakTime) > MIN_RR_INTERVAL) {
+    
+    peakDetected = true;
+    lastPeakValue = ecgValue;
+    
+    if (lastPeakTime > 0) {
+      // คำนวณ RR interval
+      unsigned long rrInterval = currentTime - lastPeakTime;
+      
+      // ตรวจสอบว่า RR interval อยู่ในช่วงที่สมเหตุสมผล
+      if (rrInterval >= MIN_RR_INTERVAL && rrInterval <= MAX_RR_INTERVAL) {
+        lastRRInterval = rrInterval;
+        
+        // คำนวณ heart rate จาก RR interval
+        int instantHR = 60000 / rrInterval;
+        
+        // เก็บค่าใน buffer สำหรับการเฉลี่ย
+        hrBuffer[hrIndex % HR_WINDOW_SIZE] = instantHR;
+        hrIndex++;
+        
+        // คำนวณค่าเฉลี่ย heart rate
+        int sum = 0;
+        int count = min(hrIndex, HR_WINDOW_SIZE);
+        for (int i = 0; i < count; i++) {
+          sum += hrBuffer[i];
+        }
+        currentHeartRate = sum / count;
+        
+        Serial.println("💓 R-peak detected! RR: " + String(rrInterval) + 
+                      "ms, Instant HR: " + String(instantHR) + 
+                      " BPM, Avg HR: " + String(currentHeartRate) + " BPM");
+      }
+    }
+    
+    lastPeakTime = currentTime;
+  }
+  
+  // Reset peak detection หลังจาผ่านไป 50ms
+  if (peakDetected && (currentTime - lastPeakTime) > 50) {
+    peakDetected = false;
+  }
+  
+  // เก็บค่าก่อนหน้าสำหรับการตรวจจับ peak
+  previousPreviousValue = previousValue;
+  previousValue = ecgValue;
+}
+
+// ฟังก์ชันดึงค่า heart rate ปัจจุบัน
+int getCurrentHeartRate() {
+  // หากไม่มี peak ใหม่มานานเกิน 3 วินาที ให้ return 0
+  if (millis() - lastPeakTime > 3000) {
+    return 0;
+  }
+  return currentHeartRate;
+}
+
+// ฟังก์ชันแสดงผลบน OLED
+void updateOLED() {
+  display.clearDisplay();
+
+  // 1. ชื่อ Device (ซ้ายบน)
+  display.setTextSize(1);
+  display.setTextColor(1);
+  display.setCursor(0, 0);
+  display.print("ECG_001");
+
+  // 2. อัตราการเต้นหัวใจ (กลางบน)
+  int heartRate = getCurrentHeartRate();
+  display.setCursor(50, 0);
+  if (heartRate > 0) {
+    display.setTextSize(1);
+    display.print(heartRate);
+    display.print(" BPM");
+  } else {
+    display.setTextSize(1);
+    display.print("-- BPM");
+  }
+
+  // 3. สัญลักษณ์ WiFi (ขวาบน) - แสดงสถานะแม้ offline
+  display.setCursor(110, 0);
+  display.setTextSize(1);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.print("WiFi");
+  } else {
+    display.print("X");
+  }
+
+  // 4. กราฟ ECG (พื้นที่ด้านล่าง) - แสดงแม้ไม่มี WiFi
+  int graphHeight = 45;
+  int graphTop = 18;
+  int graphLeft = 0;
+  int graphWidth = 128;
+  
+  // วาดเส้นแบ่งระหว่างส่วนบนและกราฟ
+  display.drawLine(0, 16, 128, 16, 1);
+  
+  // วาดกราฟ ECG จากข้อมูลใน buffer
+  static int ecgBuffer[128];
+  static int bufferIndex = 0;
+  
+  // เพิ่มค่า ECG ล่าสุดลงใน buffer สำหรับแสดงผล
+  if (idxBuf > 0) {
+    ecgBuffer[bufferIndex] = buf[idxBuf - 1];
+    bufferIndex = (bufferIndex + 1) % 128;
+  }
+  
+  // วาดกราฟ ECG แบบ scrolling
+  for (int i = 1; i < 128; i++) {
+    int prevIndex = (bufferIndex + i - 1) % 128;
+    int currIndex = (bufferIndex + i) % 128;
+    
+    int y1 = graphTop + graphHeight - map(ecgBuffer[prevIndex], 0, 4095, 0, graphHeight);
+    int y2 = graphTop + graphHeight - map(ecgBuffer[currIndex], 0, 4095, 0, graphHeight);
+    
+    // จำกัดค่า y ไม่ให้เกินขอบเขต
+    y1 = constrain(y1, graphTop, graphTop + graphHeight);
+    y2 = constrain(y2, graphTop, graphTop + graphHeight);
+    
+    display.drawLine(i - 1, y1, i, y2, 1);
+  }
+
+  // แสดงข้อมูลเพิ่มเติมที่มุมล่าง
+  display.setCursor(0, 56);
+  display.setTextSize(1);
+  if (lastRRInterval > 0) {
+    display.print("RR:");
+    display.print(lastRRInterval);
+    display.print("ms");
+  } else {
+    // แสดงสถานะเมื่อไม่มีการตรวจจับ heart rate
+    display.print("Waiting signal...");
+  }
+
+  // แสดงสถานะ WiFi ที่มุมขวาล่าง
+  display.setCursor(90, 56);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.print("Online");
+  } else {
+    display.print("Offline");
+  }
+
+  display.display();
+}
+
+bool loadConfigFromSPIFFS(String &ssid, String &pass) {
+  if (!SPIFFS.begin(true)) { // true = format if mount fails
+    Serial.println("SPIFFS mount failed, formatting...");
+    if (!SPIFFS.begin(true)) {
+      Serial.println("SPIFFS format failed!");
+      return false;
+    }
+    Serial.println("SPIFFS formatted successfully");
+  }
+  
+  if (!SPIFFS.exists(WIFI_CONFIG_PATH)) {
+    Serial.println("WiFi config file not found");
+    return false;
+  }
+  
+  File f = SPIFFS.open(WIFI_CONFIG_PATH, "r");
+  if (!f) { 
+    Serial.println("Failed to open config file"); 
+    return false; 
+  }
+  String s;
+  while (f.available()) s += (char)f.read();
+  f.close();
+  
+  Serial.println("Config file content: " + s);
+  
+  // ใช้ ArduinoJson ในการ parse เพื่อความแม่นยำ
+  DynamicJsonDocument doc(512);
+  DeserializationError error = deserializeJson(doc, s);
+  if (error) {
+    Serial.println("Failed to parse config file: " + String(error.c_str()));
+    return false;
+  }
+  
+  if (!doc.containsKey("ssid") || !doc.containsKey("pass")) {
+    Serial.println("Config file missing ssid or pass");
+    return false;
+  }
+  
+  ssid = String(doc["ssid"].as<const char*>());
+  pass = String(doc["pass"].as<const char*>());
+  
+  Serial.println("Loaded SSID: '" + ssid + "'");
+  Serial.println("Loaded Pass length: " + String(pass.length()));
+  
+  // ตรวจสอบว่า SSID ไม่ว่าง
+  if (ssid.length() == 0) {
+    Serial.println("SSID is empty!");
+    return false;
+  }
+  
+  return true;
+}
+
+void saveConfigToSPIFFS(const String &ssid, const String &pass) {
+  Serial.println("Attempting to save WiFi credentials to SPIFFS...");
+  Serial.println("SSID: '" + ssid + "'");
+  Serial.println("Pass length: " + String(pass.length()));
+  
+  if (!SPIFFS.begin(true)) { // true = format if mount fails
+    Serial.println("SPIFFS mount failed for saving, formatting...");
+    if (!SPIFFS.begin(true)) {
+      Serial.println("SPIFFS format failed!");
+      return;
+    }
+    Serial.println("SPIFFS formatted successfully");
+  }
+  
+  // ใช้ ArduinoJson สำหรับการสร้าง JSON ที่ถูกต้อง
+  DynamicJsonDocument doc(512);
+  doc["ssid"] = ssid;
+  doc["pass"] = pass;
+  
+  File f = SPIFFS.open(WIFI_CONFIG_PATH, "w");
+  if (!f) { 
+    Serial.println("Failed to open config file for writing"); 
+    return; 
+  }
+  
+  // เขียน JSON ลงไฟล์
+  size_t bytes_written = serializeJson(doc, f);
+  f.close();
+  
+  if (bytes_written > 0) {
+    Serial.println("Successfully saved " + String(bytes_written) + " bytes to SPIFFS");
+    
+    // อ่านกลับมาเพื่อยืนยัน
+    String verification;
+    File verify_f = SPIFFS.open(WIFI_CONFIG_PATH, "r");
+    if (verify_f) {
+      while (verify_f.available()) verification += (char)verify_f.read();
+      verify_f.close();
+      Serial.println("Verification read: " + verification);
+    }
+  } else {
+    Serial.println("Failed to write to SPIFFS file");
+  }
+}
+
+// Web server handlers
+void handleRoot() {
+  configServer.send(200, "text/html", config_html);
+}
+
+void handleScan() {
+  String json = "[";
+  int n = WiFi.scanNetworks();
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    int rssi = WiFi.RSSI(i);
+    bool encrypted = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    
+    json += "{";
+    json += "\"s\":\"" + ssid + "\",";
+    json += "\"r\":" + String(rssi) + ",";
+    json += "\"e\":" + String(encrypted ? 1 : 0);
+    json += "}";
+    if (i < n - 1) json += ",";
+  }
+  json += "]";
+  
+  configServer.send(200, "application/json", json);
+}
+
+void handleSave() {
+  String ssid = configServer.arg("ssid");
+  String pass = configServer.arg("pass");
+  
+  // ตรวจสอบข้อมูลที่ได้รับ
+  Serial.println("=== Handling Save Request ===");
+  Serial.println("Received SSID: '" + ssid + "'");
+  Serial.println("Password length: " + String(pass.length()));
+  
+  if (ssid.length() == 0) {
+    Serial.println("Error: SSID is empty");
+    configServer.send(400, "text/plain", "Missing SSID");
+    return;
+  }
+  
+  // ลบช่องว่างหน้าและหลัง SSID/Password
+  ssid.trim();
+  pass.trim();
+  
+  Serial.println("Trimmed SSID: '" + ssid + "'");
+  Serial.println("Trimmed Password length: " + String(pass.length()));
+  
+  saveConfigToSPIFFS(ssid, pass);
+  configServer.send(200, "text/plain", "Configuration saved. Connecting...");
+  
+  delay(1000);
+  
+  // Try to connect with new credentials
+  Serial.println("Attempting to connect to: '" + ssid + "'");
+  WiFi.disconnect(true); // ตัดการเชื่อมต่อเก่าก่อน
+  delay(500);
+  
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  unsigned long start = millis();
+  while (millis() - start < 20000) { // เพิ่มเวลาเป็น 20 วินาที
+    if (WiFi.status() == WL_CONNECTED) break;
+    delay(500);
+    Serial.print(".");
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n╔═══════════════════════════════════════╗");
+    Serial.println("║           WiFi Connection Success!    ║");
+    Serial.println("╠═══════════════════════════════════════╣");
+    Serial.print("║ Network Name: ");
+    String ssid = WiFi.SSID();
+    Serial.print(ssid);
+    for (int i = ssid.length(); i < 20; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 🌐 IP Address: ");
+    String ip = WiFi.localIP().toString();
+    Serial.print(ip);
+    for (int i = ip.length(); i < 17; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 🚪 Gateway: ");
+    String gw = WiFi.gatewayIP().toString();
+    Serial.print(gw);
+    for (int i = gw.length(); i < 20; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 🔗 Subnet Mask: ");
+    String subnet = WiFi.subnetMask().toString();
+    Serial.print(subnet);
+    for (int i = subnet.length(); i < 16; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 📡 DNS Server: ");
+    String dns = WiFi.dnsIP().toString();
+    Serial.print(dns);
+    for (int i = dns.length(); i < 17; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 📶 Signal: ");
+    int rssi = WiFi.RSSI();
+    Serial.print(rssi);
+    Serial.print(" dBm (");
+    if (rssi > -50) Serial.print("Excellent");
+    else if (rssi > -60) Serial.print("Good");
+    else if (rssi > -70) Serial.print("Fair");
+    else Serial.print("Weak");
+    Serial.print(")");
+    String rssi_str = String(rssi) + " dBm";
+    for (int i = rssi_str.length() + 12; i < 18; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ 🏷️  MAC Address: ");
+    String mac = WiFi.macAddress();
+    Serial.print(mac);
+    for (int i = mac.length(); i < 14; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.println("╚═══════════════════════════════════════╝");
+    Serial.println("🎉 Ready to start ECG monitoring!");
+    Serial.println("================================");
+    delay(2000);
+    ESP.restart();
+  } else {
+    Serial.println("\nFailed to connect with new credentials");
+    Serial.println("WiFi Status: " + String(WiFi.status()));
+  }
+}
+
+void startConfigPortal() {
+  Serial.println("Starting ECG Device Config Portal...");
+  
+  // Start WiFi in AP mode
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("ECG_Device");
+  
+  IPAddress apIP = WiFi.softAPIP();
+  Serial.println("=== Config Portal Information ===");
+  Serial.println("Access Point: ECG_Device");
+  Serial.print("Portal IP: ");
+  Serial.println(apIP);
+  Serial.println("Connect to 'ECG_Device' and open: http://" + apIP.toString());
+  Serial.println("================================");
+  
+  // Setup web server routes
+  configServer.on("/", handleRoot);
+  configServer.on("/scan", handleScan);
+  configServer.on("/save", HTTP_POST, handleSave);
+  
+  configServer.begin();
+  Serial.println("HTTP server started successfully");
+}
+
+void setupWiFi() {
+  Serial.println("=== Starting WiFi Setup ===");
+  
+  // Try to load saved credentials first
+  bool have_config = loadConfigFromSPIFFS(wifi_ssid, wifi_pass);
+  
+  if (have_config && wifi_ssid.length() > 0) {
+    Serial.println("Found valid saved WiFi credentials, attempting connection...");
+    Serial.println("SSID: '" + wifi_ssid + "'");
+    Serial.println("Password length: " + String(wifi_pass.length()));
+    
+    // ตั้งค่า WiFi persistence และ auto-reconnect
+    WiFi.persistent(true);
+    WiFi.setAutoReconnect(true);
+    WiFi.mode(WIFI_STA);
+    
+    // ตัดการเชื่อมต่อเก่าก่อน
+    WiFi.disconnect(true);
+    delay(1000);
+    
+    WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
+    
+    unsigned long start = millis();
+    Serial.print("Connecting");
+    while (millis() - start < 20000) { // เพิ่มเวลาเป็น 20 วินาที
+      wl_status_t status = WiFi.status();
+      if (status == WL_CONNECTED) {
+        Serial.println("\n╔═══════════════════════════════════════╗");
+        Serial.println("║        🎯 WiFi Connected Successfully! ║");
+        Serial.println("╠═══════════════════════════════════════╣");
+        Serial.print("║ 📶 Network: ");
+        String ssid = WiFi.SSID();
+        Serial.print(ssid);
+        for (int i = ssid.length(); i < 22; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 🌐 IP Address: ");
+        String ip = WiFi.localIP().toString();
+        Serial.print(ip);
+        for (int i = ip.length(); i < 19; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 🚪 Gateway: ");
+        String gw = WiFi.gatewayIP().toString();
+        Serial.print(gw);
+        for (int i = gw.length(); i < 22; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 🔗 Subnet: ");
+        String subnet = WiFi.subnetMask().toString();
+        Serial.print(subnet);
+        for (int i = subnet.length(); i < 23; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 📡 DNS: ");
+        String dns = WiFi.dnsIP().toString();
+        Serial.print(dns);
+        for (int i = dns.length(); i < 26; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 📊 Signal: ");
+        int rssi = WiFi.RSSI();
+        Serial.print(rssi);
+        Serial.print(" dBm (");
+        if (rssi > -50) Serial.print("Excellent");
+        else if (rssi > -60) Serial.print("Good");
+        else if (rssi > -70) Serial.print("Fair");
+        else Serial.print("Weak");
+        Serial.print(")");
+        String quality = (rssi > -50) ? "Excellent" : (rssi > -60) ? "Good" : (rssi > -70) ? "Fair" : "Weak";
+        String rssi_line = String(rssi) + " dBm (" + quality + ")";
+        for (int i = rssi_line.length(); i < 21; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.print("║ 🏷️  MAC: ");
+        String mac = WiFi.macAddress();
+        Serial.print(mac);
+        for (int i = mac.length(); i < 26; i++) Serial.print(" ");
+        Serial.println("║");
+        Serial.println("╚═══════════════════════════════════════╝");
+        return;
+      }
+      
+      // แสดงสถานะการเชื่อมต่อ
+      if ((millis() - start) % 2000 == 0) {
+        Serial.println("");
+        Serial.println("WiFi Status: " + String(status));
+        Serial.print("Connecting");
+      }
+      
+      delay(500);
+      Serial.print(".");
+    }
+    
+    Serial.println("");
+    Serial.println("=== Connection Failed ===");
+    Serial.println("Final WiFi Status: " + String(WiFi.status()));
+    Serial.println("Saved credentials failed, starting config portal...");
+  } else {
+    Serial.println("No valid saved credentials found, starting config portal...");
+  }
+  
+  // Start config portal with custom web interface
+  startConfigPortal();
+  
+  // Keep the portal running until connected
+  while (WiFi.status() != WL_CONNECTED) {
+    configServer.handleClient();
+    delay(10);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("\n=== ECG Monitor Starting ===");
+  Serial.println("Firmware: v1.0.1");
+  Serial.println("Device: ECG_001");
+  Serial.println("==========================");
+
+  // เริ่มต้น OLED Display
+  Wire.begin(OLED_SDA, OLED_SCL);
+  if (!display.begin(SH1106_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("SH1106 allocation failed");
+  } else {
+    Serial.println("OLED initialized successfully");
+    // แสดงหน้า Normal Operation ทันที
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(1);
+    display.setCursor(0, 0);
+    display.print("ECG_001");
+    display.setCursor(50, 0);
+    display.print("-- BPM");
+    display.setCursor(110, 0);
+    display.print("X");
+    display.drawLine(0, 16, 128, 16, 1);
+    display.setCursor(0, 56);
+    display.print("Initializing...");
+    display.display();
+  }
+
+  analogReadResolution(12);                    // 0..4095
+  analogSetPinAttenuation(ECG_PIN, ADC_11db);  // ~3.3V
+
+  // Setup WiFi using custom interface
+  setupWiFi();
+
+  // ตั้งค่าเวลา NTP สำหรับ timestamp ที่ถูกต้อง
+  Serial.println("🕐 Setting up NTP time...");
+  configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov"); // GMT+7 for Thailand
+  
+  Serial.print("Waiting for NTP time sync");
+  time_t now = time(nullptr);
+  int sync_attempts = 0;
+  while (now < 100000 && sync_attempts < 30) {
+    delay(500);
+    Serial.print(".");
+    now = time(nullptr);
+    sync_attempts++;
+  }
+  Serial.println("");
+  
+  if (now >= 100000) {
+    unsigned long timestamp_ms = (unsigned long)now * 1000;
+    Serial.println("✅ NTP time synchronized successfully!");
+    Serial.println("📅 Current time: " + String(ctime(&now)));
+    Serial.println("🔢 Timestamp (ms): " + String(timestamp_ms));
+  } else {
+    Serial.println("⚠️  NTP sync failed, using system time");
+  }
+
+  // ทดสอบง่าย ๆ (ไม่ตรวจ CA) — สำหรับ Production ควรใส่ root CA จริง
+  secureClient.setInsecure();
+  
+  Serial.println("=== ECG Monitoring Started ===");
+  Serial.println("Sampling Rate: " + String(SAMPLE_RATE) + " Hz");
+  Serial.println("Chunk Size: " + String(CHUNK_SIZE) + " samples");
+  Serial.println("ECG Pin: " + String(ECG_PIN));
+  Serial.println("Firebase Host: " + String(RTDB_HOST));
+  Serial.println("💓 Heart Rate Detection: ENABLED");
+  Serial.println("🎯 R-peak Threshold: " + String(ECG_THRESHOLD));
+  Serial.println("📊 HR Window Size: " + String(HR_WINDOW_SIZE) + " samples");
+  Serial.println("⚡ RR Range: " + String(MIN_RR_INTERVAL) + "-" + String(MAX_RR_INTERVAL) + " ms");
+  Serial.println("📺 OLED Display: SH1106 1.3\" (I2C: " + String(OLED_SDA) + "/" + String(OLED_SCL) + ")");
+  Serial.println("=============================");
+}
+
+void loop() {
+  // Check WiFi connection and reconnect if needed
+  static unsigned long lastWiFiCheck = 0;
+  static bool wasConnected = false;
+  
+  if (millis() - lastWiFiCheck > 1000) { // ตรวจสอบทุกวินาที
+    bool isConnected = (WiFi.status() == WL_CONNECTED);
+    
+    if (!isConnected && wasConnected) {
+      Serial.println("⚠️  WiFi connection lost! Status: " + String(WiFi.status()));
+    } else if (isConnected && !wasConnected) {
+      Serial.println("✅ WiFi reconnected!");
+    }
+    
+    if (!isConnected) {
+      Serial.println("WiFi disconnected, attempting reconnect...");
+      setupWiFi();
+      return;
+    }
+    
+    wasConnected = isConnected;
+    lastWiFiCheck = millis();
+  }
+  
+  int v = analogRead(ECG_PIN);  // 0–4095
+  buf[idxBuf++] = v;
+
+  // ตรวจจับ R-peak และคำนวณ Heart Rate
+  detectRPeakAndCalculateHR(v);
+
+  // อัปเดต OLED Display ทุก 100ms เพื่อให้ smooth มากขึ้น
+  static unsigned long lastOLEDUpdate = 0;
+  if (millis() - lastOLEDUpdate > 100) {
+    updateOLED();
+    lastOLEDUpdate = millis();
+  }
+
+  if (idxBuf >= CHUNK_SIZE) {
+    sendChunk(buf, CHUNK_SIZE);
+    idxBuf = 0;
+  }
+
+  if (millis() - lastStatus > 5000) {
+    sendStatus();
+    lastStatus = millis();
+    
+    // แสดงสถานะ WiFi ทุก 30 วินาที
+    static unsigned long lastWiFiStatus = 0;
+    if (millis() - lastWiFiStatus > 30000) {
+      showWiFiStatus();
+      lastWiFiStatus = millis();
+    }
+    
+    // Debug timestamp และ heart rate ทุก 60 วินาที
+    static unsigned long lastTimeDebug = 0;
+    if (millis() - lastTimeDebug > 60000) {
+      Serial.println("=== System Status Debug ===");
+      printCurrentTime();
+      Serial.println("💓 Current Heart Rate: " + String(getCurrentHeartRate()) + " BPM");
+      Serial.println("⏱️  Last RR Interval: " + String(lastRRInterval) + " ms");
+      Serial.println("📡 Last Peak Time: " + String(millis() - lastPeakTime) + " ms ago");
+      Serial.println("===========================");
+      lastTimeDebug = millis();
+    }
+  }
+
+  delayMicroseconds(1000000UL / SAMPLE_RATE);  // 250 Hz ~ 4000 µs
+}
+
+void sendChunk(int* data, int n) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  // ใช้ secure client
+  if (!http.begin(secureClient, chunksUrl())) {
+    Serial.println("begin() failed");
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+
+  DynamicJsonDocument doc(2048);
+  doc["sampleRate"] = SAMPLE_RATE;
+  
+  // ใช้ Unix timestamp (milliseconds) สำหรับ ts
+  time_t now = time(nullptr);
+  unsigned long timestamp_ms = (unsigned long)now * 1000;
+  doc["ts"] = timestamp_ms;
+  
+  JsonArray arr = doc.createNestedArray("values");
+  for (int i = 0; i < n; i++) arr.add(data[i]);
+
+  String body; serializeJson(doc, body);
+  int code = http.POST(body);
+
+  Serial.printf("POST chunk %d vals -> %d\n", n, code);
+  if (code > 0 && code != 200) {
+    Serial.println(http.getString());
+  }
+  http.end();
+}
+
+void sendStatus() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  if (!http.begin(secureClient, statusUrl())) {
+    Serial.println("begin() failed");
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+
+  DynamicJsonDocument doc(512);
+  doc["connected"] = true;
+  
+  // ใช้ Unix timestamp (milliseconds) แทน millis() สำหรับ last_seen
+  time_t now = time(nullptr);
+  unsigned long timestamp_ms = (unsigned long)now * 1000;
+  doc["last_seen"] = timestamp_ms;
+  
+  doc["rssi"] = WiFi.RSSI();            // dBm
+  doc["battery"] = nullptr;             // ถ้ามีวงจรวัดแบต ให้ใส่ %
+  doc["firmware_version"] = "1.0.1";    // อัปเดตเวอร์ชัน
+  
+  // เพิ่มค่า Heart Rate
+  int heartRate = getCurrentHeartRate();
+  doc["heart_rate"] = heartRate;
+  doc["rr_interval"] = lastRRInterval;
+  
+  // เพิ่ม debug info
+  Serial.println("Current timestamp: " + String(timestamp_ms) + " (" + String(ctime(&now)) + ")");
+  Serial.println("Sending Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
+
+  String body; serializeJson(doc, body);
+  int code = http.PUT(body);
+
+  Serial.printf("PUT status -> %d\n", code);
+  if (code > 0 && code != 200) {
+    Serial.println(http.getString());
+  }
+  http.end();
+}
+
+void showWiFiStatus() {
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n╔══════════════════════════════════╗");
+    Serial.println("║        WiFi Status Report        ║");
+    Serial.println("╠══════════════════════════════════╣");
+    Serial.print("║ Network: ");
+    Serial.print(WiFi.SSID());
+    for (int i = WiFi.SSID().length(); i < 20; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ IP Address: ");
+    String ip = WiFi.localIP().toString();
+    Serial.print(ip);
+    for (int i = ip.length(); i < 15; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ Gateway: ");
+    String gw = WiFi.gatewayIP().toString();
+    Serial.print(gw);
+    for (int i = gw.length(); i < 18; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ Subnet: ");
+    String subnet = WiFi.subnetMask().toString();
+    Serial.print(subnet);
+    for (int i = subnet.length(); i < 19; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ DNS: ");
+    String dns = WiFi.dnsIP().toString();
+    Serial.print(dns);
+    for (int i = dns.length(); i < 22; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ Signal: ");
+    Serial.print(WiFi.RSSI());
+    Serial.print(" dBm");
+    String rssi_str = String(WiFi.RSSI()) + " dBm";
+    for (int i = rssi_str.length(); i < 17; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ MAC: ");
+    String mac = WiFi.macAddress();
+    Serial.print(mac);
+    for (int i = mac.length(); i < 21; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.print("║ Uptime: ");
+    unsigned long uptime = millis() / 1000;
+    String uptime_str = String(uptime / 3600) + "h " + String((uptime % 3600) / 60) + "m " + String(uptime % 60) + "s";
+    Serial.print(uptime_str);
+    for (int i = uptime_str.length(); i < 16; i++) Serial.print(" ");
+    Serial.println("║");
+    Serial.println("╚══════════════════════════════════╝");
+  } else {
+    Serial.println("WiFi Status: Disconnected");
+  }
+}
