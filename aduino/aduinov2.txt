@@ -6,6 +6,9 @@
 #include "SPIFFS.h"
 #include <WebServer.h>
 #include <time.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SH110X.h>
 
 // WiFi credentials will be loaded from SPIFFS - no hardcoded values needed
 String wifi_ssid = "";
@@ -13,6 +16,16 @@ String wifi_pass = "";
 
 WebServer configServer(80);
 
+// OLED Display Configuration
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_ADDR 0x3C
+#define USE_SH1106
+#define OLED_SDA 21
+#define OLED_SCL 22
+#define OLED_RESET -1
+
+Adafruit_SH1106G display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // แนะนำโดเมนใหม่ (ถ้า Project ของคุณแสดง region เป็น asia-southeast1 ให้ใช้แบบนั้น)
 // ตัวอย่าง: "https://ecg-monitor-f1fcb-asia-southeast1.firebasedatabase.app"
 // ถ้าคุณยังใช้ default-rtdb: ให้ใช้ "https://ecg-monitor-f1fcb-default-rtdb.asia-southeast1.firebasedatabase.app"
@@ -582,6 +595,94 @@ int getCurrentHeartRate() {
   return currentHeartRate;
 }
 
+// ฟังก์ชันแสดงผลบน OLED
+void updateOLED() {
+  display.clearDisplay();
+
+  // 1. ชื่อ Device (ซ้ายบน)
+  display.setTextSize(1);
+  display.setTextColor(1);
+  display.setCursor(0, 0);
+  display.print("ECG_001");
+
+  // 2. อัตราการเต้นหัวใจ (กลางบน)
+  int heartRate = getCurrentHeartRate();
+  display.setCursor(50, 0);
+  if (heartRate > 0) {
+    display.setTextSize(1);
+    display.print(heartRate);
+    display.print(" BPM");
+  } else {
+    display.setTextSize(1);
+    display.print("-- BPM");
+  }
+
+  // 3. สัญลักษณ์ WiFi (ขวาบน) - แสดงสถานะแม้ offline
+  display.setCursor(110, 0);
+  display.setTextSize(1);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.print("WiFi");
+  } else {
+    display.print("X");
+  }
+
+  // 4. กราฟ ECG (พื้นที่ด้านล่าง) - แสดงแม้ไม่มี WiFi
+  int graphHeight = 45;
+  int graphTop = 18;
+  int graphLeft = 0;
+  int graphWidth = 128;
+  
+  // วาดเส้นแบ่งระหว่างส่วนบนและกราฟ
+  display.drawLine(0, 16, 128, 16, 1);
+  
+  // วาดกราฟ ECG จากข้อมูลใน buffer
+  static int ecgBuffer[128];
+  static int bufferIndex = 0;
+  
+  // เพิ่มค่า ECG ล่าสุดลงใน buffer สำหรับแสดงผล
+  if (idxBuf > 0) {
+    ecgBuffer[bufferIndex] = buf[idxBuf - 1];
+    bufferIndex = (bufferIndex + 1) % 128;
+  }
+  
+  // วาดกราฟ ECG แบบ scrolling
+  for (int i = 1; i < 128; i++) {
+    int prevIndex = (bufferIndex + i - 1) % 128;
+    int currIndex = (bufferIndex + i) % 128;
+    
+    int y1 = graphTop + graphHeight - map(ecgBuffer[prevIndex], 0, 4095, 0, graphHeight);
+    int y2 = graphTop + graphHeight - map(ecgBuffer[currIndex], 0, 4095, 0, graphHeight);
+    
+    // จำกัดค่า y ไม่ให้เกินขอบเขต
+    y1 = constrain(y1, graphTop, graphTop + graphHeight);
+    y2 = constrain(y2, graphTop, graphTop + graphHeight);
+    
+    display.drawLine(i - 1, y1, i, y2, 1);
+  }
+
+  // แสดงข้อมูลเพิ่มเติมที่มุมล่าง
+  display.setCursor(0, 56);
+  display.setTextSize(1);
+  if (lastRRInterval > 0) {
+    display.print("RR:");
+    display.print(lastRRInterval);
+    display.print("ms");
+  } else {
+    // แสดงสถานะเมื่อไม่มีการตรวจจับ heart rate
+    display.print("Waiting signal...");
+  }
+
+  // แสดงสถานะ WiFi ที่มุมขวาล่าง
+  display.setCursor(90, 56);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.print("Online");
+  } else {
+    display.print("Offline");
+  }
+
+  display.display();
+}
+
 bool loadConfigFromSPIFFS(String &ssid, String &pass) {
   if (!SPIFFS.begin(true)) { // true = format if mount fails
     Serial.println("SPIFFS mount failed, formatting...");
@@ -942,6 +1043,28 @@ void setup() {
   Serial.println("Device: ECG_001");
   Serial.println("==========================");
 
+  // เริ่มต้น OLED Display
+  Wire.begin(OLED_SDA, OLED_SCL);
+  if (!display.begin(OLED_ADDR, true)) {
+    Serial.println("SH1106 allocation failed");
+  }else {
+    Serial.println("OLED initialized successfully");
+    // แสดงหน้า Normal Operation ทันที
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(1);
+    display.setCursor(0, 0);
+    display.print("ECG_001");
+    display.setCursor(50, 0);
+    display.print("-- BPM");
+    display.setCursor(110, 0);
+    display.print("X");
+    display.drawLine(0, 16, 128, 16, 1);
+    display.setCursor(0, 56);
+    display.print("Initializing...");
+    display.display();
+  }
+
   analogReadResolution(12);                    // 0..4095
   analogSetPinAttenuation(ECG_PIN, ADC_11db);  // ~3.3V
 
@@ -984,6 +1107,7 @@ void setup() {
   Serial.println("🎯 R-peak Threshold: " + String(ECG_THRESHOLD));
   Serial.println("📊 HR Window Size: " + String(HR_WINDOW_SIZE) + " samples");
   Serial.println("⚡ RR Range: " + String(MIN_RR_INTERVAL) + "-" + String(MAX_RR_INTERVAL) + " ms");
+  Serial.println("📺 OLED Display: SH1106 1.3\" (I2C: " + String(OLED_SDA) + "/" + String(OLED_SCL) + ")");
   Serial.println("=============================");
 }
 
@@ -1016,6 +1140,13 @@ void loop() {
 
   // ตรวจจับ R-peak และคำนวณ Heart Rate
   detectRPeakAndCalculateHR(v);
+
+  // อัปเดต OLED Display ทุก 100ms เพื่อให้ smooth มากขึ้น
+  static unsigned long lastOLEDUpdate = 0;
+  if (millis() - lastOLEDUpdate > 100) {
+    updateOLED();
+    lastOLEDUpdate = millis();
+  }
 
   if (idxBuf >= CHUNK_SIZE) {
     sendChunk(buf, CHUNK_SIZE);

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase';
 import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+// Import ECG analysis service เพื่อให้เริ่มทำงานอัตโนมัติ
+import '../analyze/analyze-ecg.js';
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
@@ -14,6 +16,38 @@ const AlertsCenter = () => {
   });
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
+  // ฟังก์ชันสร้างข้อความแจ้งเตือนตามข้อมูล ECG
+  const generateAlertMessage = (data) => {
+    const { abnormalities, ecg_data, alert_level } = data;
+    
+    if (!abnormalities || abnormalities.length === 0) {
+      return `ECG ผิดปกติ - Heart Rate: ${ecg_data?.heart_rate} BPM`;
+    }
+
+    const messages = [];
+    
+    if (abnormalities.includes('bradycardia')) {
+      messages.push(`อัตราการเต้นหัวใจช้า (${ecg_data?.heart_rate} BPM)`);
+    }
+    if (abnormalities.includes('tachycardia')) {
+      messages.push(`อัตราการเต้นหัวใจเร็ว (${ecg_data?.heart_rate} BPM)`);
+    }
+    if (abnormalities.includes('high_qrs_amplitude')) {
+      messages.push('QRS Amplitude สูงผิดปกติ');
+    }
+    if (abnormalities.includes('t_wave_inversion')) {
+      messages.push('T-wave กลับด้าน');
+    }
+    if (abnormalities.includes('pr_interval_prolonged')) {
+      messages.push('PR Interval ยาวผิดปกติ');
+    }
+    if (abnormalities.includes('qt_interval_prolonged')) {
+      messages.push('QT Interval ยาวผิดปกติ');
+    }
+
+    return messages.join(', ');
+  };
 
   useEffect(() => {
     fetchAlerts();
@@ -30,23 +64,32 @@ const AlertsCenter = () => {
       const user = auth.currentUser;
       if (!user) return;
 
+      // ดึงข้อมูลจาก ecg_status collection แทน alerts
       const alertsQuery = query(
-        collection(db, 'alerts'),
-        where('user_id', '==', user.uid),
-        orderBy('timestamp', 'desc')
+        collection(db, 'ecg_status'),
+        orderBy('created_at', 'desc')
       );
 
       const alertsSnapshot = await getDocs(alertsQuery);
-      const alertsData = alertsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp.toDate()
-      }));
+      const alertsData = alertsSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          // แปลงข้อมูลให้เข้ากับ UI
+          type: data.status === 'abnormal' ? 'ecg_abnormal' : 'ecg_normal',
+          message: generateAlertMessage(data),
+          timestamp: data.created_at?.toDate() || new Date(),
+          severity: data.alert_level || 'medium',
+          read: false, // default ยังไม่อ่าน
+          device_id: data.device_id || 'ECG_001'
+        };
+      });
 
       setAlerts(alertsData);
     } catch (error) {
-      console.error('Error fetching alerts:', error);
-      alert('เกิดข้อผิดพลาดในการโหลดการแจ้งเตือน');
+      console.error('Error fetching ECG alerts:', error);
+      alert('เกิดข้อผิดพลาดในการโหลดการแจ้งเตือน ECG');
     } finally {
       setLoading(false);
     }
@@ -78,7 +121,15 @@ const AlertsCenter = () => {
     let filtered = alerts;
 
     if (filters.type !== 'all') {
-      filtered = filtered.filter(alert => alert.type === filters.type);
+      if (filters.type === 'ecg') {
+        filtered = filtered.filter(alert => alert.type?.includes('ecg'));
+      } else if (filters.type === 'high_severity') {
+        filtered = filtered.filter(alert => alert.severity === 'high');
+      } else if (filters.type === 'medium_severity') {
+        filtered = filtered.filter(alert => alert.severity === 'medium');
+      } else {
+        filtered = filtered.filter(alert => alert.type === filters.type);
+      }
     }
 
     if (filters.status !== 'all') {
@@ -92,7 +143,8 @@ const AlertsCenter = () => {
 
   const markAsRead = async (alertId) => {
     try {
-      await updateDoc(doc(db, 'alerts', alertId), {
+      // อัปเดตใน ecg_status collection
+      await updateDoc(doc(db, 'ecg_status', alertId), {
         read: true,
         read_at: new Date()
       });
@@ -216,13 +268,13 @@ const AlertsCenter = () => {
             <div className="flex items-center">
               <div className="p-2 bg-red-100 rounded-lg">
                 <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 18.5c-.77.833.192 2.5 1.732 2.5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">ฉุกเฉิน</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'emergency').length}
+                  {alerts.filter(alert => alert.severity === 'high').length}
                 </p>
               </div>
             </div>
@@ -238,7 +290,7 @@ const AlertsCenter = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">คำเตือน</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'warning').length}
+                  {alerts.filter(alert => alert.severity === 'medium').length}
                 </p>
               </div>
             </div>
@@ -288,9 +340,9 @@ const AlertsCenter = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="all">ทั้งหมด</option>
-                <option value="emergency">ฉุกเฉิน</option>
-                <option value="warning">คำเตือน</option>
-                <option value="info">ข้อมูล</option>
+                <option value="ecg">ECG ผิดปกติ</option>
+                <option value="high_severity">ฉุกเฉิน</option>
+                <option value="medium_severity">คำเตือน</option>
               </select>
             </div>
           </div>
@@ -309,9 +361,9 @@ const AlertsCenter = () => {
                 <div
                   key={alert.id}
                   className={`p-4 rounded-lg border-l-4 ${
-                    alert.type === 'emergency'
+                    alert.severity === 'high'
                       ? 'border-red-500 bg-red-50'
-                      : alert.type === 'warning'
+                      : alert.severity === 'medium'
                       ? 'border-yellow-500 bg-yellow-50'
                       : 'border-blue-500 bg-blue-50'
                   } ${alert.read ? 'opacity-60' : ''}`}
@@ -320,17 +372,17 @@ const AlertsCenter = () => {
                     <div className="flex-1">
                       <div className="flex items-center space-x-2 mb-2">
                         <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          alert.type === 'emergency'
+                          alert.severity === 'high'
                             ? 'bg-red-100 text-red-800'
-                            : alert.type === 'warning'
+                            : alert.severity === 'medium'
                             ? 'bg-yellow-100 text-yellow-800'
                             : 'bg-blue-100 text-blue-800'
                         }`}>
-                          {alert.type === 'emergency' ? 'ฉุกเฉิน' : 
-                           alert.type === 'warning' ? 'คำเตือน' : 'ข้อมูล'}
+                          {alert.severity === 'high' ? 'ฉุกเฉิน' : 
+                           alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ'}
                         </span>
-                        <span className="text-sm text-gray-500">
-                          {alert.timestamp.toLocaleString('th-TH')}
+                        <span className="text-xs text-gray-500">
+                          {alert.device_id}
                         </span>
                         {!alert.read && (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
@@ -338,13 +390,19 @@ const AlertsCenter = () => {
                           </span>
                         )}
                       </div>
-                      <h3 className="font-medium text-gray-900 mb-1">{alert.title}</h3>
+                      <h3 className="font-medium text-gray-900 mb-1">การแจ้งเตือน ECG</h3>
                       <p className="text-gray-600 text-sm">{alert.message}</p>
-                      {alert.heart_rate && (
-                        <p className="text-sm text-gray-500 mt-2">
-                          อัตราการเต้นหัวใจ: {alert.heart_rate} bpm
-                        </p>
+                      {alert.ecg_data?.heart_rate && (
+                        <div className="mt-2 text-sm text-gray-500">
+                          <p>💓 อัตราการเต้นหัวใจ: {alert.ecg_data.heart_rate} BPM</p>
+                          {alert.abnormalities && alert.abnormalities.length > 0 && (
+                            <p>⚠️ อาการ: {alert.abnormalities.join(', ')}</p>
+                          )}
+                        </div>
                       )}
+                      <p className="text-xs text-gray-400 mt-2">
+                        {alert.timestamp.toLocaleString('th-TH')}
+                      </p>
                     </div>
                     <div className="flex space-x-2">
                       {!alert.read && (
