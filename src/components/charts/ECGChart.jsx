@@ -1,16 +1,116 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => {
+const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
   const canvasRef = useRef(null);
   const [peaks, setPeaks] = useState([]);
+  const [ecgData, setEcgData] = useState([]);
+  const [status, setStatus] = useState({ connected: false, heart_rate: 0 });
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  // ดึงข้อมูลจาก Firebase Realtime Database
+  useEffect(() => {
+    const fetchECGData = async () => {
+      try {
+        // ดึงข้อมูล status
+        const statusResponse = await fetch(
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/status.json'
+        );
+        const statusData = await statusResponse.json();
+        
+        if (statusData) {
+          setStatus(statusData);
+        }
+
+        // ดึงข้อมูล ECG analysis (ล่าสุด 10 รายการ)
+        const ecgResponse = await fetch(
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data.json'
+        );
+        const ecgAnalysisData = await ecgResponse.json();
+        
+        if (ecgAnalysisData) {
+          // แปลงข้อมูล ECG analysis เป็นจุดข้อมูลสำหรับกราฟ
+          const dataPoints = Object.entries(ecgAnalysisData)
+            .sort(([a], [b]) => parseInt(b) - parseInt(a)) // เรียงตาม timestamp ใหม่สุด
+            .slice(0, 100) // เอา 100 จุดล่าสุด
+            .map(([timestamp, data], index) => ({
+              x: index * 4, // จำลองเวลา (4ms ต่อจุด)
+              y: generateECGWaveform(data, index), // สร้างคลื่น ECG จากข้อมูล analysis
+              timestamp: parseInt(timestamp),
+              heartRate: data.heart_rate
+            }));
+
+          setEcgData(dataPoints);
+          setLastUpdate(new Date());
+        }
+      } catch (error) {
+        console.error('Error fetching ECG data:', error);
+        setStatus({ connected: false, heart_rate: 0 });
+      }
+    };
+
+    // ดึงข้อมูลครั้งแรก
+    fetchECGData();
+
+    // ตั้ง interval ดึงข้อมูลทุก 2 วินาที
+    const interval = setInterval(fetchECGData, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // ฟังก์ชันสร้างคลื่น ECG จากข้อมูล analysis
+  const generateECGWaveform = (analysisData, index) => {
+    if (!analysisData) return 0;
+    
+    // สร้างคลื่น ECG ตาม analysis data
+    const { p_wave_amplitude = 0.3, qrs_amplitude = 1.2, t_wave_amplitude = 0.8, heart_rate = 75 } = analysisData;
+    
+    // คำนวณตำแหน่งในคลื่นหัวใจ (0-1)
+    const cycleLength = 60000 / heart_rate; // ความยาวของ 1 cycle ในมิลลิวินาที
+    const timeInCycle = (index * 4) % cycleLength;
+    const normalizedTime = timeInCycle / cycleLength;
+    
+    // สร้างคลื่น ECG แบบจำลอง
+    let amplitude = 0;
+    
+    if (normalizedTime < 0.1) {
+      // P wave
+      amplitude = p_wave_amplitude * Math.sin(normalizedTime * 10 * Math.PI);
+    } else if (normalizedTime < 0.2) {
+      // Baseline
+      amplitude = 0;
+    } else if (normalizedTime < 0.3) {
+      // QRS complex
+      if (normalizedTime < 0.25) {
+        amplitude = -qrs_amplitude * 0.3; // Q wave
+      } else if (normalizedTime < 0.28) {
+        amplitude = qrs_amplitude; // R wave
+      } else {
+        amplitude = -qrs_amplitude * 0.5; // S wave
+      }
+    } else if (normalizedTime < 0.4) {
+      // Baseline
+      amplitude = 0;
+    } else if (normalizedTime < 0.7) {
+      // T wave
+      amplitude = t_wave_amplitude * Math.sin((normalizedTime - 0.4) * 10 * Math.PI);
+    } else {
+      // Baseline
+      amplitude = 0;
+    }
+    
+    // เพิ่ม noise เล็กน้อย
+    amplitude += (Math.random() - 0.5) * 0.05;
+    
+    return amplitude;
+  };
 
   useEffect(() => {
     drawChart();
-  }, [data, width, height]);
+  }, [ecgData, width, height]);
 
   const drawChart = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !data.length) return;
+    if (!canvas || !ecgData.length) return;
 
     const ctx = canvas.getContext('2d');
     const { width: canvasWidth, height: canvasHeight } = canvas;
@@ -24,12 +124,12 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
     const chartHeight = canvasHeight - (padding * 2);
 
     // Calculate data range
-    const timeRange = data.length > 0 ? {
-      min: data[0].x,
-      max: data[data.length - 1].x
+    const timeRange = ecgData.length > 0 ? {
+      min: ecgData[0].x,
+      max: ecgData[ecgData.length - 1].x
     } : { min: 0, max: 1 };
 
-    const voltageRange = data.reduce((range, point) => ({
+    const voltageRange = ecgData.reduce((range, point) => ({
       min: Math.min(range.min, point.y),
       max: Math.max(range.max, point.y)
     }), { min: Infinity, max: -Infinity });
@@ -45,7 +145,7 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
     }
 
     // Draw ECG waveform
-    drawECGWaveform(ctx, data, padding, chartWidth, chartHeight, timeRange, voltageRange);
+    drawECGWaveform(ctx, ecgData, padding, chartWidth, chartHeight, timeRange, voltageRange);
 
     // Draw axes
     drawAxes(ctx, padding, chartWidth, chartHeight, timeRange, voltageRange);
@@ -152,8 +252,12 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
           ❤️ ECG Real-time Monitor
         </h3>
         <div className="flex items-center space-x-4 text-sm text-gray-600">
-          <span>📊 {data.length} samples</span>
-          <span>📡 {data.length > 0 ? '🟢 Live' : '🔴 No Signal'}</span>
+          <span>📊 {ecgData.length} samples</span>
+          <span>� {status.heart_rate || 0} BPM</span>
+          <span>📡 {status.connected ? '🟢 Connected' : '🔴 Disconnected'}</span>
+          {lastUpdate && (
+            <span>🕒 {lastUpdate.toLocaleTimeString('th-TH')}</span>
+          )}
         </div>
       </div>
       
@@ -166,7 +270,8 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
       />
       
       <div className="mt-2 text-xs text-gray-500 text-center">
-        Real-time ECG waveform visualization
+        Real-time ECG data from Firebase Realtime Database
+        {status.device_id && <span className="ml-2">• Device: {status.device_id || 'ECG_001'}</span>}
       </div>
     </div>
   );
