@@ -584,10 +584,14 @@ void detectRPeakAndCalculateHR(int ecgValue) {
         // คำนวณค่าเฉลี่ย heart rate
         int sum = 0;
         int count = min(hrIndex, HR_WINDOW_SIZE);
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < count && i < HR_WINDOW_SIZE; i++) {
           sum += hrBuffer[i];
         }
-        currentHeartRate = sum / count;
+        if (count > 0) {
+          currentHeartRate = sum / count;
+        } else {
+          currentHeartRate = 0;
+        }
         
         // เมื่อตรวจพบ R-peak ให้ทำการวิเคราะห์คลื่น ECG ในบริเวณนั้น
         analysisReady = true;
@@ -647,18 +651,28 @@ void analyzeECGWaveform() {
     return;
   }
   
+  // เพิ่มการป้องกัน memory corruption
+  if (ANALYSIS_WINDOW <= 0 || ANALYSIS_WINDOW > 1000) {
+    Serial.println("⚠️  Invalid ANALYSIS_WINDOW size, skipping analysis");
+    analysisReady = false;
+    return;
+  }
+  
   // หาจุดสูงสุดและต่ำสุดใน buffer
   int maxVal = 0, minVal = 4095;
   int maxPos = 0, minPos = 0;
   
   for (int i = 0; i < ANALYSIS_WINDOW; i++) {
-    if (analysisBuf[i] > maxVal) {
-      maxVal = analysisBuf[i];
-      maxPos = i;
-    }
-    if (analysisBuf[i] < minVal) {
-      minVal = analysisBuf[i];
-      minPos = i;
+    // ตรวจสอบขอบเขต array ก่อนเข้าถึง
+    if (i >= 0 && i < ANALYSIS_WINDOW) {
+      if (analysisBuf[i] > maxVal) {
+        maxVal = analysisBuf[i];
+        maxPos = i;
+      }
+      if (analysisBuf[i] < minVal) {
+        minVal = analysisBuf[i];
+        minPos = i;
+      }
     }
   }
   
@@ -671,7 +685,7 @@ void analyzeECGWaveform() {
   
   // หาจุดเริ่มต้น QRS (จากซ้ายของ peak)
   for (int i = maxPos; i >= 0; i--) {
-    if (analysisBuf[i] < threshold) {
+    if (i < ANALYSIS_WINDOW && analysisBuf[i] < threshold) {
       qrs_start = i;
       break;
     }
@@ -679,7 +693,7 @@ void analyzeECGWaveform() {
   
   // หาจุดสิ้นสุด QRS (จากขวาของ peak)
   for (int i = maxPos; i < ANALYSIS_WINDOW; i++) {
-    if (analysisBuf[i] < threshold) {
+    if (i < ANALYSIS_WINDOW && analysisBuf[i] < threshold) {
       qrs_end = i;
       break;
     }
@@ -698,7 +712,11 @@ void analyzeECGWaveform() {
   int p_search_end = max(0, qrs_start - 5);
   int p_max = baseline;
   
-  for (int i = p_search_start; i < p_search_end; i++) {
+  // ป้องกัน index เกินขอบเขต array
+  p_search_start = constrain(p_search_start, 0, ANALYSIS_WINDOW - 1);
+  p_search_end = constrain(p_search_end, 0, ANALYSIS_WINDOW);
+  
+  for (int i = p_search_start; i < p_search_end && i < ANALYSIS_WINDOW; i++) {
     if (analysisBuf[i] > p_max) {
       p_max = analysisBuf[i];
     }
@@ -708,11 +726,15 @@ void analyzeECGWaveform() {
   
   // หา T-wave (หลัง QRS complex)
   // มองหา peak ใน 60 ตัวอย่างหลังจาก QRS
-  int t_search_start = min(ANALYSIS_WINDOW-1, qrs_end + 10);
-  int t_search_end = min(ANALYSIS_WINDOW-1, qrs_end + 60);
+  int t_search_start = min(ANALYSIS_WINDOW-1, max(0, qrs_end + 10));
+  int t_search_end = min(ANALYSIS_WINDOW, max(0, qrs_end + 60));
   int t_max = baseline;
   
-  for (int i = t_search_start; i < t_search_end; i++) {
+  // ป้องกัน index เกินขอบเขต array
+  t_search_start = constrain(t_search_start, 0, ANALYSIS_WINDOW - 1);
+  t_search_end = constrain(t_search_end, 0, ANALYSIS_WINDOW);
+  
+  for (int i = t_search_start; i < t_search_end && i < ANALYSIS_WINDOW; i++) {
     if (analysisBuf[i] > t_max) {
       t_max = analysisBuf[i];
     }
@@ -721,8 +743,10 @@ void analyzeECGWaveform() {
   if (t_wave_amplitude < 0.05) t_wave_amplitude = 0.0; // ถ้าต่ำเกินไปให้เป็น 0
   
   // คำนวณ PR interval (จาก P-wave ถึง QRS)
-  if (p_wave_amplitude > 0.05 && qrs_start >= 0) {
+  if (p_wave_amplitude > 0.05 && qrs_start >= 0 && qrs_start < ANALYSIS_WINDOW) {
     int p_pos = p_search_start + (p_search_end - p_search_start) / 2; // ประมาณตำแหน่ง P
+    // ตรวจสอบขอบเขตของ p_pos
+    p_pos = constrain(p_pos, 0, ANALYSIS_WINDOW - 1);
     pr_interval = (qrs_start - p_pos) * (1.0 / SAMPLE_RATE);
     if (pr_interval < 0.1 || pr_interval > 0.3) pr_interval = 0.16; // ค่า default ถ้าผิดปกติ
   } else {
@@ -730,8 +754,10 @@ void analyzeECGWaveform() {
   }
   
   // คำนวณ QT interval (จาก QRS ถึง T-wave)
-  if (t_wave_amplitude > 0.05 && qrs_start >= 0) {
+  if (t_wave_amplitude > 0.05 && qrs_start >= 0 && qrs_start < ANALYSIS_WINDOW) {
     int t_pos = t_search_start + (t_search_end - t_search_start) / 2; // ประมาณตำแหน่ง T
+    // ตรวจสอบขอบเขตของ t_pos
+    t_pos = constrain(t_pos, 0, ANALYSIS_WINDOW - 1);
     qt_interval = (t_pos - qrs_start) * (1.0 / SAMPLE_RATE);
     if (qt_interval < 0.3 || qt_interval > 0.5) qt_interval = 0.40; // ค่า default ถ้าผิดปกติ
   } else {
@@ -739,6 +765,14 @@ void analyzeECGWaveform() {
   }
   
   analysisReady = false; // รีเซ็ตสถานะ
+  
+  // ป้องกัน float overflow ในการแสดงผล
+  if (qrs_amplitude > 10.0) qrs_amplitude = 0.0;
+  if (p_wave_amplitude > 10.0) p_wave_amplitude = 0.0;
+  if (t_wave_amplitude > 10.0) t_wave_amplitude = 0.0;
+  if (qrs_interval > 1.0) qrs_interval = 0.08;
+  if (pr_interval > 1.0) pr_interval = 0.16;
+  if (qt_interval > 1.0) qt_interval = 0.40;
   
   Serial.println("📊 ECG Analysis - QRS: " + String(qrs_amplitude, 3) + "V, " +
                 "P: " + String(p_wave_amplitude, 3) + "V, " +
@@ -793,7 +827,7 @@ void updateOLED() {
   static int bufferIndex = 0;
   
   // เพิ่มค่า ECG ล่าสุดลงใน buffer สำหรับแสดงผล
-  if (idxBuf > 0) {
+  if (idxBuf > 0 && idxBuf <= CHUNK_SIZE) {
     ecgBuffer[bufferIndex] = buf[idxBuf - 1];
     bufferIndex = (bufferIndex + 1) % 128;
   }
@@ -1291,6 +1325,27 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long lastMemoryCheck = 0;
+  static unsigned long loopCount = 0;
+  
+  loopCount++;
+  
+  // ตรวจสอบหน่วยความจำทุก 10 วินาที
+  if (millis() - lastMemoryCheck > 10000) {
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < 10000) {  // ถ้าหน่วยความจำเหลือน้อยกว่า 10KB
+      Serial.println("⚠️  Low memory warning: " + String(freeHeap) + " bytes free");
+      Serial.println("🔄 Restarting device to free memory...");
+      delay(1000);
+      ESP.restart();
+    }
+    lastMemoryCheck = millis();
+    
+    // แสดง memory info ทุก 30 วินาที
+    if (loopCount % 7500 == 0) {  // ประมาณ 30 วินาทีที่ 250Hz
+      Serial.println("💾 Free heap: " + String(freeHeap) + " bytes, Loop: " + String(loopCount));
+    }
+  }
   // Check WiFi connection and reconnect if needed
   static unsigned long lastWiFiCheck = 0;
   static bool wasConnected = false;
@@ -1315,7 +1370,15 @@ void loop() {
   }
   
   int v = analogRead(ECG_PIN);  // 0–4095
-  buf[idxBuf++] = v;
+  
+  // ป้องกัน buffer overflow สำหรับ buf array
+  if (idxBuf < CHUNK_SIZE) {
+    buf[idxBuf++] = v;
+  } else {
+    // รีเซ็ต buffer index เมื่อเต็ม
+    idxBuf = 0;
+    buf[idxBuf++] = v;
+  }
 
   // เก็บข้อมูลลง analysis buffer สำหรับการวิเคราะห์คลื่น ECG
   analysisBuf[analysisIdx] = v;
@@ -1324,8 +1387,12 @@ void loop() {
   // อัปเดต baseline
   updateBaseline(v);
 
-  // ตรวจจับ R-peak และคำนวณ Heart Rate
-  detectRPeakAndCalculateHR(v);
+  // ตรวจจับ R-peak และคำนวณ Heart Rate (ตรวจสอบค่า v ก่อน)
+  if (v >= 0 && v <= 4095) {
+    detectRPeakAndCalculateHR(v);
+  } else {
+    Serial.println("⚠️  Invalid ADC reading: " + String(v));
+  }
   
   // วิเคราะห์คลื่น ECG หลังจากตรวจพบ R-peak
   analyzeECGWaveform();
@@ -1363,7 +1430,15 @@ void loop() {
     }
   }
 
-  delayMicroseconds(1000000UL / SAMPLE_RATE);  // 250 Hz ~ 4000 µs
+  // คงจังหวะ sampling rate ที่ 250Hz (4000 microseconds = 4ms)
+  static unsigned long lastSampleTime = 0;
+  unsigned long currentTime = micros();
+  unsigned long targetDelay = 1000000UL / SAMPLE_RATE;  // 4000 µs สำหรับ 250 Hz
+  
+  if (currentTime - lastSampleTime < targetDelay) {
+    delayMicroseconds(targetDelay - (currentTime - lastSampleTime));
+  }
+  lastSampleTime = micros();
 }
 
 void sendChunk(int* data, int n) {

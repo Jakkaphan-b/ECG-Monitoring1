@@ -8,19 +8,54 @@ import { useNavigate } from 'react-router-dom';
 const Dashboard = () => {
   const [ecgData, setEcgData] = useState([]);
   const [deviceStatus, setDeviceStatus] = useState(null);
-  const [deviceId, setDeviceId] = useState(null);
+  const [deviceId, setDeviceId] = useState('ECG_001'); // ใช้ default device ID
   const [heartRate, setHeartRate] = useState(null);
+  const [realtimeHeartRate, setRealtimeHeartRate] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadDeviceConfig();
+    // เริ่มดึงข้อมูล heart rate จาก Firebase Realtime Database
+    startRealtimeMonitoring();
+    
     return () => {
       if (deviceId) {
         ecgService.stopListening(deviceId);
       }
     };
   }, []);
+
+  // ฟังก์ชันดึงข้อมูล real-time จาก Firebase
+  const startRealtimeMonitoring = () => {
+    const fetchRealtimeData = async () => {
+      try {
+        // ดึงข้อมูล status (รวม heart rate)
+        const statusResponse = await fetch(
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/status.json'
+        );
+        const statusData = await statusResponse.json();
+        
+        if (statusData) {
+          setDeviceStatus(statusData);
+          if (statusData.heart_rate) {
+            setRealtimeHeartRate(statusData.heart_rate);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching realtime data:', error);
+      }
+    };
+
+    // ดึงข้อมูลครั้งแรก
+    fetchRealtimeData();
+
+    // ตั้ง interval ดึงข้อมูลทุก 3 วินาที
+    const interval = setInterval(fetchRealtimeData, 3000);
+
+    // เก็บ interval ID ไว้ใน component
+    return () => clearInterval(interval);
+  };
 
   useEffect(() => {
     if (deviceId) {
@@ -96,11 +131,13 @@ const Dashboard = () => {
  };
 
   const getHeartRateStatus = () => {
-    if (!heartRate || !heartRate.bpm) return { icon: '💔', text: 'ไม่พบสัญญาณ', color: 'text-gray-500' };
+    // ใช้ realtime heart rate ก่อน, ถ้าไม่มีใช้ heart rate จาก analysis
+    const currentBpm = realtimeHeartRate || heartRate?.bpm;
     
-    const bpm = heartRate.bpm;
-    if (bpm < 60) return { icon: '💙', text: 'ต่ำกว่าปกติ', color: 'text-blue-600' };
-    if (bpm > 100) return { icon: '❤️', text: 'สูงกว่าปกติ', color: 'text-red-600' };
+    if (!currentBpm) return { icon: '💔', text: 'ไม่พบสัญญาณ', color: 'text-gray-500' };
+    
+    if (currentBpm < 60) return { icon: '💙', text: 'ต่ำกว่าปกติ', color: 'text-blue-600' };
+    if (currentBpm > 100) return { icon: '❤️', text: 'สูงกว่าปกติ', color: 'text-red-600' };
     return { icon: '💚', text: 'ปกติ', color: 'text-green-600' };
   };
 
@@ -184,9 +221,12 @@ const Dashboard = () => {
               <div>
                 <p className="text-sm text-gray-600">อัตราการเต้นหัวใจ</p>
                 <p className={`text-2xl font-bold ${hrStatus.color}`}>
-                  {heartRate?.bpm || '--'}
-                  {heartRate?.bpm && <span className="text-sm ml-1">BPM</span>}
+                  {realtimeHeartRate || heartRate?.bpm || '--'}
+                  {(realtimeHeartRate || heartRate?.bpm) && <span className="text-sm ml-1">BPM</span>}
                 </p>
+                {realtimeHeartRate && (
+                  <p className="text-xs text-green-600">🔄 Real-time</p>
+                )}
               </div>
             </div>
           </div>
@@ -222,7 +262,6 @@ const Dashboard = () => {
         {/* ECG Chart */}
         <div className="mb-6">
           <ECGChart 
-            data={ecgData} 
             width={1000} 
             height={400}
             showGrid={true}
@@ -230,23 +269,32 @@ const Dashboard = () => {
         </div>
 
         {/* Detailed Analysis */}
-        {heartRate && (
+        {(realtimeHeartRate || heartRate) && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               📋 การวิเคราะห์ที่ละเอียด
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="text-center">
-                <p className="text-3xl font-bold text-blue-600">{heartRate.bpm}</p>
+                <p className="text-3xl font-bold text-blue-600">
+                  {realtimeHeartRate || heartRate?.bpm || '--'}
+                </p>
                 <p className="text-sm text-gray-600">BPM</p>
+                {realtimeHeartRate && (
+                  <p className="text-xs text-green-600">จาก Realtime Database</p>
+                )}
               </div>
               <div className="text-center">
-                <p className="text-3xl font-bold text-green-600">{heartRate.peaks}</p>
+                <p className="text-3xl font-bold text-green-600">
+                  {heartRate?.peaks || '--'}
+                </p>
                 <p className="text-sm text-gray-600">R-peaks detected</p>
               </div>
               <div className="text-center">
-                <p className="text-3xl font-bold text-purple-600">{Math.round(heartRate.confidence)}%</p>
-                <p className="text-sm text-gray-600">Confidence</p>
+                <p className="text-3xl font-bold text-purple-600">
+                  {deviceStatus?.connected ? '100' : '0'}%
+                </p>
+                <p className="text-sm text-gray-600">Connection Quality</p>
               </div>
             </div>
           </div>
