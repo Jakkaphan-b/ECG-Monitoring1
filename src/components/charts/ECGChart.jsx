@@ -1,16 +1,198 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => {
+const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
   const canvasRef = useRef(null);
   const [peaks, setPeaks] = useState([]);
+  const [ecgData, setEcgData] = useState([]);
+  const [status, setStatus] = useState({ connected: false, heart_rate: 0 });
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  // ฟังก์ชันสร้างข้อมูล ECG จำลอง
+  const generateMockECGData = () => {
+    const data = [];
+    const heartRate = 75;
+    const sampleRate = 250; // 250 Hz
+    const totalSamples = 1000;
+    
+    for (let i = 0; i < totalSamples; i++) {
+      const time = i / sampleRate;
+      const beatDuration = 60 / heartRate;
+      const timeInBeat = (time % beatDuration) / beatDuration;
+      
+      let amplitude = 0;
+      if (timeInBeat < 0.1) {
+        // P wave
+        amplitude = 0.3 * Math.sin(timeInBeat * 10 * Math.PI);
+      } else if (timeInBeat < 0.2) {
+        amplitude = 0;
+      } else if (timeInBeat < 0.3) {
+        // QRS complex
+        if (timeInBeat < 0.25) {
+          amplitude = -0.4; // Q wave
+        } else if (timeInBeat < 0.28) {
+          amplitude = 1.2; // R wave
+        } else {
+          amplitude = -0.6; // S wave
+        }
+      } else if (timeInBeat < 0.4) {
+        amplitude = 0;
+      } else if (timeInBeat < 0.7) {
+        // T wave
+        amplitude = 0.5 * Math.sin((timeInBeat - 0.4) * 10 * Math.PI);
+      }
+      
+      // เพิ่ม noise เล็กน้อย
+      amplitude += (Math.random() - 0.5) * 0.05;
+      
+      data.push({
+        x: i * 4, // 4ms per sample
+        y: amplitude,
+        timestamp: Date.now() + i,
+        heartRate: heartRate
+      });
+    }
+    
+    return data;
+  };
+
+  // เพิ่มข้อมูลจำลองเริ่มต้น
+  useEffect(() => {
+    const initialData = generateMockECGData();
+    setEcgData(initialData);
+    setStatus({ connected: false, heart_rate: 75 });
+    setLastUpdate(new Date());
+  }, []);
+
+  // ดึงข้อมูลจาก Firebase Realtime Database
+  useEffect(() => {
+    const fetchECGData = async () => {
+      try {
+        // ดึงข้อมูล status
+        const statusResponse = await fetch(
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/status.json'
+        );
+        const statusData = await statusResponse.json();
+        
+        console.log('Status data:', statusData); // Debug log
+        
+        if (statusData) {
+          setStatus(statusData);
+        }
+
+        // ดึงข้อมูล ECG analysis (ล่าสุด 10 รายการ)
+        const ecgResponse = await fetch(
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data.json'
+        );
+        const ecgAnalysisData = await ecgResponse.json();
+        
+        console.log('ECG Analysis data:', ecgAnalysisData); // Debug log
+        
+        if (ecgAnalysisData && Object.keys(ecgAnalysisData).length > 0) {
+          // แปลงข้อมูล ECG analysis เป็นจุดข้อมูลสำหรับกราฟ
+          const dataPoints = Object.entries(ecgAnalysisData)
+            .sort(([a], [b]) => parseInt(b) - parseInt(a)) // เรียงตาม timestamp ใหม่สุด
+            .slice(0, 100) // เอา 100 จุดล่าสุด
+            .map(([timestamp, data], index) => ({
+              x: index * 4, // จำลองเวลา (4ms ต่อจุด)
+              y: generateECGWaveform(data, index), // สร้างคลื่น ECG จากข้อมูล analysis
+              timestamp: parseInt(timestamp),
+              heartRate: data.heart_rate || 75
+            }));
+
+          console.log('Generated data points:', dataPoints.length, dataPoints.slice(0, 5)); // Debug log
+          setEcgData(dataPoints);
+          setLastUpdate(new Date());
+        } else {
+          // ถ้าไม่มีข้อมูลจาก Firebase ให้สร้างข้อมูลจำลอง
+          console.log('No ECG data found, generating mock data');
+          const mockData = generateMockECGData();
+          setEcgData(mockData);
+          setLastUpdate(new Date());
+        }
+      } catch (error) {
+        console.error('Error fetching ECG data:', error);
+        setStatus({ connected: false, heart_rate: 0 });
+        // สร้างข้อมูลจำลองเมื่อเกิด error
+        const mockData = generateMockECGData();
+        setEcgData(mockData);
+      }
+    };
+
+    // ดึงข้อมูลครั้งแรก
+    fetchECGData();
+
+    // ตั้ง interval ดึงข้อมูลทุก 2 วินาที
+    const interval = setInterval(fetchECGData, 2000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // ฟังก์ชันสร้างคลื่น ECG จากข้อมูล analysis
+  const generateECGWaveform = (analysisData, index) => {
+    if (!analysisData) {
+      console.log('No analysis data for index:', index);
+      return 0;
+    }
+    
+    // สร้างคลื่น ECG ตาม analysis data
+    const { p_wave_amplitude = 0.3, qrs_amplitude = 1.2, t_wave_amplitude = 0.8, heart_rate = 75 } = analysisData;
+    
+    // คำนวณตำแหน่งในคลื่นหัวใจ (0-1)
+    const cycleLength = 60000 / heart_rate; // ความยาวของ 1 cycle ในมิลลิวินาที
+    const timeInCycle = (index * 4) % cycleLength;
+    const normalizedTime = timeInCycle / cycleLength;
+    
+    // สร้างคลื่น ECG แบบจำลอง
+    let amplitude = 0;
+    
+    if (normalizedTime < 0.1) {
+      // P wave
+      amplitude = p_wave_amplitude * Math.sin(normalizedTime * 10 * Math.PI);
+    } else if (normalizedTime < 0.2) {
+      // Baseline
+      amplitude = 0;
+    } else if (normalizedTime < 0.3) {
+      // QRS complex
+      if (normalizedTime < 0.25) {
+        amplitude = -qrs_amplitude * 0.3; // Q wave
+      } else if (normalizedTime < 0.28) {
+        amplitude = qrs_amplitude; // R wave
+      } else {
+        amplitude = -qrs_amplitude * 0.5; // S wave
+      }
+    } else if (normalizedTime < 0.4) {
+      // Baseline
+      amplitude = 0;
+    } else if (normalizedTime < 0.7) {
+      // T wave
+      amplitude = t_wave_amplitude * Math.sin((normalizedTime - 0.4) * 10 * Math.PI);
+    } else {
+      // Baseline
+      amplitude = 0;
+    }
+    
+    // เพิ่ม noise เล็กน้อย
+    amplitude += (Math.random() - 0.5) * 0.05;
+    
+    if (index < 5) {
+      console.log(`Point ${index}: amplitude=${amplitude}, normalizedTime=${normalizedTime}`);
+    }
+    
+    return amplitude;
+  };
 
   useEffect(() => {
     drawChart();
-  }, [data, width, height]);
+  }, [ecgData, width, height]);
 
   const drawChart = () => {
     const canvas = canvasRef.current;
-    if (!canvas || !data.length) return;
+    if (!canvas) {
+      console.log('Canvas not found');
+      return;
+    }
+
+    console.log('Drawing chart with data length:', ecgData.length);
 
     const ctx = canvas.getContext('2d');
     const { width: canvasWidth, height: canvasHeight } = canvas;
@@ -18,18 +200,27 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
     // Clear canvas
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
+    // ถ้าไม่มีข้อมูล ให้วาดข้อความแจ้ง
+    if (!ecgData.length) {
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '16px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Loading ECG data...', canvasWidth / 2, canvasHeight / 2);
+      return;
+    }
+
     // Setup
     const padding = 40;
     const chartWidth = canvasWidth - (padding * 2);
     const chartHeight = canvasHeight - (padding * 2);
 
     // Calculate data range
-    const timeRange = data.length > 0 ? {
-      min: data[0].x,
-      max: data[data.length - 1].x
+    const timeRange = ecgData.length > 0 ? {
+      min: ecgData[0].x,
+      max: ecgData[ecgData.length - 1].x
     } : { min: 0, max: 1 };
 
-    const voltageRange = data.reduce((range, point) => ({
+    const voltageRange = ecgData.reduce((range, point) => ({
       min: Math.min(range.min, point.y),
       max: Math.max(range.max, point.y)
     }), { min: Infinity, max: -Infinity });
@@ -39,13 +230,16 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
     voltageRange.min -= voltagePadding;
     voltageRange.max += voltagePadding;
 
+    console.log('Voltage range:', voltageRange);
+    console.log('Time range:', timeRange);
+
     // Draw grid
     if (showGrid) {
       drawGrid(ctx, padding, chartWidth, chartHeight, timeRange, voltageRange);
     }
 
     // Draw ECG waveform
-    drawECGWaveform(ctx, data, padding, chartWidth, chartHeight, timeRange, voltageRange);
+    drawECGWaveform(ctx, ecgData, padding, chartWidth, chartHeight, timeRange, voltageRange);
 
     // Draw axes
     drawAxes(ctx, padding, chartWidth, chartHeight, timeRange, voltageRange);
@@ -75,7 +269,13 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
   };
 
   const drawECGWaveform = (ctx, data, padding, chartWidth, chartHeight, timeRange, voltageRange) => {
-    if (data.length < 2) return;
+    if (data.length < 2) {
+      console.log('Not enough data points to draw:', data.length);
+      return;
+    }
+
+    console.log('Drawing waveform with', data.length, 'points');
+    console.log('First few points:', data.slice(0, 3));
 
     ctx.strokeStyle = '#ef4444';
     ctx.lineWidth = 2;
@@ -152,8 +352,12 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
           ❤️ ECG Real-time Monitor
         </h3>
         <div className="flex items-center space-x-4 text-sm text-gray-600">
-          <span>📊 {data.length} samples</span>
-          <span>📡 {data.length > 0 ? '🟢 Live' : '🔴 No Signal'}</span>
+          <span>📊 {ecgData.length} samples</span>
+          <span>  {status.heart_rate || 0} BPM</span>
+          <span>📡 {status.connected ? '🟢 Connected' : '🔴 Disconnected'}</span>
+          {lastUpdate && (
+            <span>🕒 {lastUpdate.toLocaleTimeString('th-TH')}</span>
+          )}
         </div>
       </div>
       
@@ -166,7 +370,8 @@ const ECGChart = ({ data = [], width = 800, height = 400, showGrid = true }) => 
       />
       
       <div className="mt-2 text-xs text-gray-500 text-center">
-        Real-time ECG waveform visualization
+        Real-time ECG data from Firebase Realtime Database
+        {status.device_id && <span className="ml-2">• Device: {status.device_id || 'ECG_001'}</span>}
       </div>
     </div>
   );
