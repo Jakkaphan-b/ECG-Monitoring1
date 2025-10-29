@@ -3,7 +3,7 @@ import { auth, db } from '../../firebase';
 import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 // Import ECG analysis service เพื่อให้เริ่มทำงานอัตโนมัติ
-import '../analyze/analyze-ecg.js';
+// import '../analyze/analyze-ecg.js';
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);

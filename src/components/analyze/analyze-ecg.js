@@ -1,6 +1,6 @@
 // Firebase configuration and imports
 import { db } from '../../firebase.js';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
 
 // Firebase Realtime Database URL
 const databaseUrl = 'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data.json';
@@ -103,27 +103,28 @@ function isQTIntervalProlonged(ecgData) {
 }
 
 // Function to save the abnormal status to Firestore
-async function saveStatusToFirestore(timestamp, result, ecgData) {
-    try {
-        const firestoreData = {
-            timestamp: timestamp,
-            status: result.status,
-            abnormalities: result.abnormalities || [],
-            date_time: serverTimestamp(),
-            device_id: 'ECG_001',
-            ecg_data: ecgData,
-            alert_level: determineAlertLevel(ecgData),
-            created_at: serverTimestamp()
-        };
+async function saveStatusToFirestore(eventTimestamp, ecgData, abnormalities) {
+  try {
+    const deviceId = (ecgData?.device_id || 'ECG_000').trim();
+    const tsStr = String(eventTimestamp);
 
-        // บันทึกข้อมูลลง Firestore collection 'ecg_status'
-        const docRef = await addDoc(collection(db, 'ecg_status'), firestoreData);
-        console.log('Abnormal ECG status saved to Firestore with ID:', docRef.id);
-        console.log('Abnormalities detected:', result.abnormalities);
-        
-    } catch (error) {
-        console.error('Error saving status to Firestore:', error);
-    }
+    const payload = {
+      device_id: deviceId,
+      event_timestamp: ecgData?.timestamp ?? eventTimestamp,
+      alert_level: determineAlertLevel(ecgData),
+      abnormalities: Array.isArray(abnormalities) ? abnormalities : [],
+      created_at: serverTimestamp(),
+      ecg_data: ecgData || {},
+    };
+
+    // ecg_status/{deviceId}/events/{timestamp}
+    const docRef = doc(db, 'ecg_status', deviceId, 'events', tsStr);
+    await setDoc(docRef, payload);
+
+    console.log(`✅ Saved ECG status for device ${deviceId} at ${tsStr}`);
+  } catch (error) {
+    console.error('❌ Error saving status to Firestore:', error.message || error);
+  }
 }
 
 // Function to determine alert level based on ECG data
