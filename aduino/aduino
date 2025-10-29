@@ -545,9 +545,8 @@ WiFiClientSecure secureClient;
 // ฟังก์ชันเสริมสำหรับการแสดงเวลาและ timestamp
 void printCurrentTime() {
   time_t now = time(nullptr);
-  unsigned long timestamp_ms = (unsigned long)now * 1000;
   Serial.println("Current time: " + String(ctime(&now)));
-  Serial.println("Timestamp (ms): " + String(timestamp_ms));
+  Serial.println("Timestamp (s): " + String((unsigned long)now)); // แสดงเป็นวินาที (10 หลัก)
 }
 
 // ฟังก์ชันตรวจจับ R-peak และคำนวณ Heart Rate
@@ -601,7 +600,7 @@ void detectRPeakAndCalculateHR(int ecgValue) {
                       " BPM, Avg HR: " + String(currentHeartRate) + " BPM");
         
         // ส่งข้อมูล ECG analysis ทันทีเมื่อตรวจพบ R-peak
-        sendECGAnalysis();
+        // sendECGAnalysis();
       }
     }
     
@@ -640,22 +639,22 @@ void updateBaseline(int ecgValue) {
 }
 
 // ฟังก์ชันวิเคราะห์คลื่น ECG จากข้อมูลจริง
-void analyzeECGWaveform() {
-  if (!analysisReady) return;
+bool analyzeECGWaveform() {
+  if (!analysisReady) return false;
   
   // ตรวจสอบว่า buffer มีข้อมูลเพียงพอ (อย่างน้อย 50% ของ window)
   static int bufferFillCount = 0;
   bufferFillCount++;
   if (bufferFillCount < ANALYSIS_WINDOW / 2) {
     analysisReady = false;
-    return;
+    return false;
   }
   
   // เพิ่มการป้องกัน memory corruption
   if (ANALYSIS_WINDOW <= 0 || ANALYSIS_WINDOW > 1000) {
     Serial.println("⚠️  Invalid ANALYSIS_WINDOW size, skipping analysis");
     analysisReady = false;
-    return;
+    return false;
   }
   
   // หาจุดสูงสุดและต่ำสุดใน buffer
@@ -780,6 +779,9 @@ void analyzeECGWaveform() {
   Serial.println("⏱️  Intervals - QRS: " + String(qrs_interval, 3) + "s, " +
                 "PR: " + String(pr_interval, 3) + "s, " +
                 "QT: " + String(qt_interval, 3) + "s");
+
+ // ✅ บอกว่าเสร็จสมบูรณ์ พร้อมส่งไป Firebase
+  return true;
 }
 
 // ฟังก์ชันแสดงผลบน OLED
@@ -1272,6 +1274,11 @@ void setup() {
   analogReadResolution(12);                    // 0..4095
   analogSetPinAttenuation(ECG_PIN, ADC_11db);  // ~3.3V
 
+    // ✅ เพิ่มตรงนี้
+  for (int i = 0; i < ANALYSIS_WINDOW; i++) {
+    analysisBuf[i] = baseline;
+  }
+
   // Setup WiFi using custom interface
   setupWiFi();
 
@@ -1291,10 +1298,9 @@ void setup() {
   Serial.println("");
   
   if (now >= 100000) {
-    unsigned long timestamp_ms = (unsigned long)now * 1000;
     Serial.println("✅ NTP time synchronized successfully!");
     Serial.println("📅 Current time: " + String(ctime(&now)));
-    Serial.println("🔢 Timestamp (ms): " + String(timestamp_ms));
+    Serial.println("🔢 Timestamp (ms): " + String((unsigned long)now));
   } else {
     Serial.println("⚠️  NTP sync failed, using system time");
   }
@@ -1395,7 +1401,9 @@ void loop() {
   }
   
   // วิเคราะห์คลื่น ECG หลังจากตรวจพบ R-peak
-  analyzeECGWaveform();
+ if (analyzeECGWaveform()) {
+  sendECGAnalysis();  // ✅ ตอนนี้ค่าทั้งหมดคำนวณครบแล้ว
+}
 
   // อัปเดต OLED Display ทุก 100ms เพื่อให้ smooth มากขึ้น
   static unsigned long lastOLEDUpdate = 0;
@@ -1462,9 +1470,8 @@ void sendStatus() {
   
   // ใช้ Unix timestamp (milliseconds) แทน millis() สำหรับ last_seen และ timestamp
   time_t now = time(nullptr);
-  unsigned long timestamp_ms = (unsigned long)now * 1000;
-  doc["last_seen"] = timestamp_ms;
-  doc["timestamp"] = String(timestamp_ms);
+  doc["last_seen"] = (unsigned long)now; // ส่งเป็นวินาที (10 หลัก)
+  doc["timestamp"] = String((unsigned long)now); // ถ้าต้องการ timestamp เป็นวินาทีด้วย
   
   doc["rssi"] = WiFi.RSSI();            // dBm
   doc["firmware_version"] = "1.0.1";    // อัปเดตเวอร์ชัน
@@ -1475,7 +1482,7 @@ void sendStatus() {
   doc["rr_interval"] = lastRRInterval;
   
   // เพิ่ม debug info
-  Serial.println("Current timestamp: " + String(timestamp_ms) + " (" + String(ctime(&now)) + ")");
+  Serial.println("Current timestamp: " + String((unsigned long)now) + " (" + String(ctime(&now)) + ")");
   Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
 
   String body; serializeJson(doc, body);
@@ -1506,8 +1513,7 @@ void sendWiFiConfig(const String &ssid, const String &password, const String &st
   
   // เพิ่ม timestamp
   time_t now = time(nullptr);
-  unsigned long timestamp_ms = (unsigned long)now * 1000;
-  doc["timestamp"] = String(timestamp_ms);
+  doc["timestamp"] = String((unsigned long)now);
 
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
@@ -1523,12 +1529,12 @@ void sendWiFiConfig(const String &ssid, const String &password, const String &st
 void sendECGAnalysis() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  // ใช้ timestamp ปัจจุบันเป็น key
+  // ใช้ timestamp ปัจจุบันเป็น key (วินาที)
   time_t now = time(nullptr);
-  unsigned long timestamp_ms = (unsigned long)now * 1000;
+
 
   HTTPClient http;
-  if (!http.begin(secureClient, ecgDataUrl(timestamp_ms))) {
+  if (!http.begin(secureClient, ecgDataUrl((unsigned long)now))) {
     Serial.println("ECG data begin() failed");
     return;
   }
@@ -1546,7 +1552,7 @@ void sendECGAnalysis() {
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
 
-  Serial.printf("PUT ecg_data/%lu -> %d\n", timestamp_ms, code);
+  Serial.printf("PUT ecg_data/%lu -> %d\n", (unsigned long)now, code);
   if (code > 0 && code != 200) {
     Serial.println(http.getString());
   }
