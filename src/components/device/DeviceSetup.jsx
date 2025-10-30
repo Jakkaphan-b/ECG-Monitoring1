@@ -31,28 +31,116 @@ const DeviceSetup = () => {
   const scanForDevices = async () => {
     setIsLoading(true);
     try {
+      console.log('Scanning for devices...');
+
+      // ลองดูข้อมูลทั้งหมดก่อน
       const devicesRef = ref(rtdb, 'ecg_stream');
       const snapshot = await get(devicesRef);
-      
+
+      console.log('Raw data:', snapshot.val()); // เพิ่มบรรทัดนี้เพื่อ debug
+
       if (snapshot.exists()) {
         const devices = [];
+        const rawData = snapshot.val();
+
         snapshot.forEach((child) => {
           const deviceId = child.key;
-          const status = child.val().status;
-          if (status && status.connected) {
-            devices.push({
-              id: deviceId,
-              status: status,
-              lastSeen: status.last_seen
-            });
+          const deviceData = child.val();
+
+          console.log(`Device ${deviceId}:`, deviceData); // debug แต่ละ device
+
+          // ปรับเงื่อนไขให้หลวมขึ้น
+          if (deviceData) {
+            // ตรวจสอบหลายรูปแบบ
+            const status = deviceData.status || deviceData;
+            const isOnline = status.connected === true ||
+              status.online === true ||
+              status.wifi_status === 'connected' ||
+              (deviceData.timestamp && (Date.now() - deviceData.timestamp) < 60000); // online ใน 1 นาทีที่แล้ว
+
+            if (isOnline) {
+              devices.push({
+                id: deviceId,
+                status: status,
+                lastSeen: status.last_seen || status.timestamp || Date.now(),
+                data: deviceData // เก็บข้อมูลทั้งหมดไว้ debug
+              });
+            }
           }
         });
+
+        console.log('Found devices:', devices); // debug ผลลัพธ์
         setAvailableDevices(devices);
+
+        if (devices.length === 0) {
+          // ถ้าไม่เจออุปกรณ์ ลองค้นหาในรูปแบบอื่น
+          await scanAlternativePaths();
+        }
+      } else {
+        console.log('No data in ecg_stream path');
+        // ลองค้นหาใน path อื่น
+        await scanAlternativePaths();
       }
     } catch (error) {
       console.error('Error scanning devices:', error);
+      alert('เกิดข้อผิดพลาดในการสแกน: ' + error.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // เพิ่มฟังก์ชันใหม่สำหรับค้นหาใน path อื่น
+  const scanAlternativePaths = async () => {
+    const alternatePaths = [
+      'devices',
+      'device_status',
+      'ecg_devices',
+      'online_devices'
+    ];
+
+    for (const path of alternatePaths) {
+      try {
+        console.log(`Checking path: ${path}`);
+        const pathRef = ref(rtdb, path);
+        const snapshot = await get(pathRef);
+
+        if (snapshot.exists()) {
+          console.log(`Data found in ${path}:`, snapshot.val());
+          // ประมวลผลข้อมูลเหมือนเดิม
+          const devices = [];
+          const rawData = snapshot.val();
+
+          if (typeof rawData === 'object') {
+            Object.keys(rawData).forEach((deviceId) => {
+              const deviceData = rawData[deviceId];
+              if (deviceData) {
+                const status = deviceData.status || deviceData;
+                const isOnline = status.connected === true ||
+                  status.online === true ||
+                  status.wifi_status === 'connected' ||
+                  (deviceData.timestamp && (Date.now() - deviceData.timestamp) < 60000);
+
+                if (isOnline) {
+                  devices.push({
+                    id: deviceId,
+                    status: status,
+                    lastSeen: status.last_seen || status.timestamp || Date.now(),
+                    data: deviceData
+                  });
+                }
+              }
+            });
+          }
+
+          if (devices.length > 0) {
+            console.log(`Found ${devices.length} devices in ${path}`);
+            setAvailableDevices(devices);
+            return; // หยุดหาเมื่อเจออุปกรณ์แล้ว
+          }
+        }
+      } catch (error) {
+        console.log(`No data in ${path}:`, error.message);
+      }
     }
   };
 
@@ -63,7 +151,7 @@ const DeviceSetup = () => {
     try {
       const docRef = doc(db, 'devices', user.uid);
       const docSnap = await getDoc(docRef);
-      
+
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.device_id) {
@@ -84,33 +172,71 @@ const DeviceSetup = () => {
     if (!deviceId) return;
 
     const deviceStatusRef = ref(rtdb, `ecg_stream/${deviceId}/status`);
+    const wifiConfigRef = ref(rtdb, `ecg_stream/${deviceId}/wifi_config`);
     
-    const unsubscribe = onValue(deviceStatusRef, (snapshot) => {
+    let deviceConnected = false;
+    let wifiConnected = false;
+
+    // 🔍 ตรวจสอบ Device Status
+    const statusUnsubscribe = onValue(deviceStatusRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        setDeviceStatus({
-          connected: data.connected || false,
+        console.log('Device status received:', data);
+        
+        deviceConnected = data.connected === true;
+        
+        setDeviceStatus(prev => ({
+          ...prev,
+          connected: deviceConnected,
           last_seen: data.last_seen,
           battery: data.battery,
           rssi: data.rssi,
           firmware_version: data.firmware_version,
           wifi_status: data.wifi_status || 'unknown'
-        });
+        }));
 
-        // ถ้าเชื่อมต่อสำเร็จแล้ว ไป step 3
-        if (data.connected && data.wifi_status === 'connected') {
-          setCurrentStep(3);
-        }
+        // ✅ ตรวจสอบเงื่อนไขตามที่คุณเสนอ
+        checkAndGoToStep3(deviceConnected, wifiConnected);
       } else {
-        setDeviceStatus(prev => ({ 
-          ...prev, 
+        setDeviceStatus(prev => ({
+          ...prev,
           connected: false,
           wifi_status: 'disconnected'
         }));
       }
     });
 
-    return () => off(deviceStatusRef, 'value', unsubscribe);
+    // 🔍 ตรวจสอบ WiFi Config Status
+    const wifiUnsubscribe = onValue(wifiConfigRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const wifiData = snapshot.val();
+        console.log('WiFi config received:', wifiData);
+        
+        wifiConnected = wifiData.status === 'connected';
+        
+        // ✅ ตรวจสอบเงื่อนไขตามที่คุณเสนอ
+        checkAndGoToStep3(deviceConnected, wifiConnected);
+      }
+    });
+
+    // 🎯 ฟังก์ชันตรวจสอบเงื่อนไขแบบที่คุณเสนอ
+    const checkAndGoToStep3 = (deviceConn, wifiConn) => {
+      console.log('Checking conditions:', {
+        deviceConnected: deviceConn,
+        wifiConnected: wifiConn
+      });
+
+      // ✅ เงื่อนไข: device.connected === true AND wifi_config.status === 'connected'
+      if (deviceConn === true && wifiConn === true) {
+        console.log('✅ Both conditions met! Going to step 3');
+        setCurrentStep(3);
+      }
+    };
+
+    return () => {
+      off(deviceStatusRef, 'value', statusUnsubscribe);
+      off(wifiConfigRef, 'value', wifiUnsubscribe);
+    };
   };
 
   const saveDeviceId = async () => {
@@ -123,11 +249,14 @@ const DeviceSetup = () => {
     if (!user) return;
 
     setIsLoading(true);
-    
+
     try {
       const docRef = doc(db, 'devices', user.uid);
-      await setDoc(docRef, { device_id: deviceId }, { merge: true });
-      
+      await setDoc(docRef, {
+        device_id: deviceId,
+        user_id: user.uid // เพิ่ม user_id ตรงนี้
+      }, { merge: true });
+
       setCurrentStep(2);
       alert('บันทึก Device ID เรียบร้อย');
     } catch (error) {
@@ -148,31 +277,26 @@ const DeviceSetup = () => {
     if (!user) return;
 
     setIsLoading(true);
-    
+
     try {
-      // บันทึกใน Firestore
+      // ✅ แก้ไขเฉพาะ Firestore (สำหรับเก็บข้อมูล User)
       const docRef = doc(db, 'devices', user.uid);
-      await setDoc(docRef, { 
+      await setDoc(docRef, {
         device_id: deviceId,
-        wifi_config: wifiConfig 
+        wifi_config: wifiConfig,
+        user_id: user.uid
       }, { merge: true });
 
-      // ส่งคำสั่งไปยัง ESP32 ผ่าน Realtime Database
-      const wifiConfigRef = ref(rtdb, `ecg_stream/${deviceId}/wifi_config`);
-      await set(wifiConfigRef, {
-        ssid: wifiConfig.ssid,
-        password: wifiConfig.password,
-        timestamp: Date.now(),
-        status: 'pending'
-      });
+      // ❌ เอาส่วนนี้ออก - ไม่ส่งไปยัง RTDB
+      // การตั้งค่า WiFi ให้ทำผ่าน Config Portal ของ Arduino เท่านั้น
 
-      // เริ่มตรวจสอบการเชื่อมต่อ
+      // ✅ เริ่มตรวจสอบการเชื่อมต่อเท่านั้น
       checkDeviceConnection(deviceId);
-      
-      alert('ส่งการตั้งค่า WiFi ไปยังอุปกรณ์แล้ว กำลังรอการเชื่อมต่อ...');
+
+      alert('บันทึกการตั้งค่า WiFi แล้ว กำลังตรวจสอบการเชื่อมต่อ...\n\nกรุณาไปตั้งค่า WiFi ที่อุปกรณ์ (192.168.4.1) ด้วยค่าที่ระบุไว้');
     } catch (error) {
-      console.error('Error sending WiFi config:', error);
-      alert('เกิดข้อผิดพลาดในการส่งการตั้งค่า');
+      console.error('Error saving WiFi config:', error);
+      alert('เกิดข้อผิดพลาดในการบันทึก');
     } finally {
       setIsLoading(false);
     }
@@ -200,14 +324,14 @@ const DeviceSetup = () => {
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
       <h3 className="font-semibold text-blue-900 mb-4 flex items-center">
         📋 วิธีการเชื่อมต่ออุปกรณ์
-        <button 
+        <button
           onClick={() => setShowInstructions(!showInstructions)}
           className="ml-auto text-blue-600"
         >
           {showInstructions ? '🔼' : '🔽'}
         </button>
       </h3>
-      
+
       {showInstructions && (
         <div className="space-y-4 text-blue-700">
           <div className="flex items-start space-x-3">
@@ -217,7 +341,7 @@ const DeviceSetup = () => {
               <p className="text-sm">เสียบสาย USB หรือใช้แบตเตอรี่</p>
             </div>
           </div>
-          
+
           <div className="flex items-start space-x-3">
             <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold mt-0.5">2</span>
             <div>
@@ -225,7 +349,7 @@ const DeviceSetup = () => {
               <p className="text-sm">หา WiFi ชื่อ "ECG_Device" แล้วเชื่อมต่อ</p>
             </div>
           </div>
-          
+
           <div className="flex items-start space-x-3">
             <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold mt-0.5">3</span>
             <div>
@@ -233,7 +357,7 @@ const DeviceSetup = () => {
               <p className="text-sm">เปิดเบราว์เซอร์ไป 192.168.4.1 เพื่อดู Device ID</p>
             </div>
           </div>
-          
+
           <div className="flex items-start space-x-3">
             <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold mt-0.5">4</span>
             <div>
@@ -260,31 +384,28 @@ const DeviceSetup = () => {
           <div className="flex items-center justify-center mb-8">
             <div className="flex items-center">
               {/* Step 1 */}
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
-                currentStep >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
-              }`}>
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${currentStep >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                }`}>
                 1
               </div>
               <div className="text-sm ml-2 mr-4">Device ID</div>
-              
+
               {/* Separator */}
               <div className={`w-8 h-0.5 ${currentStep >= 2 ? 'bg-blue-600' : 'bg-gray-200'}`}></div>
-              
+
               {/* Step 2 */}
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ml-4 ${
-                currentStep >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
-              }`}>
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ml-4 ${currentStep >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'
+                }`}>
                 2
               </div>
               <div className="text-sm ml-2 mr-4">WiFi Setup</div>
-              
+
               {/* Separator */}
               <div className={`w-8 h-0.5 ${currentStep >= 3 ? 'bg-green-600' : 'bg-gray-200'}`}></div>
-              
+
               {/* Step 3 */}
-              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ml-4 ${
-                currentStep >= 3 ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-600'
-              }`}>
+              <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ml-4 ${currentStep >= 3 ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-600'
+                }`}>
                 3
               </div>
               <div className="text-sm ml-2">Connected</div>
@@ -307,19 +428,32 @@ const DeviceSetup = () => {
               <div className="border rounded-lg p-4">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="font-medium">🔍 อุปกรณ์ที่พบ</h4>
-                  <button
-                    onClick={scanForDevices}
-                    disabled={isLoading}
-                    className="px-4 py-2 text-blue-600 border border-blue-300 rounded hover:bg-blue-50"
-                  >
-                    สแกนหาอุปกรณ์
-                  </button>
+                  <div className="space-x-2">
+                    <button
+                      onClick={scanForDevices}
+                      disabled={isLoading}
+                      className="px-4 py-2 text-blue-600 border border-blue-300 rounded hover:bg-blue-50"
+                    >
+                      สแกนหาอุปกรณ์
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const devicesRef = ref(rtdb, '/');
+                        const snapshot = await get(devicesRef);
+                        console.log('All Realtime Database data:', snapshot.val());
+                        alert('ดูข้อมูลใน Console (F12)');
+                      }}
+                      className="px-4 py-2 text-red-600 border border-red-300 rounded hover:bg-red-50"
+                    >
+                      Debug DB
+                    </button>
+                  </div>
                 </div>
-                
+
                 {availableDevices.length > 0 ? (
                   <div className="space-y-2">
                     {availableDevices.map((device) => (
-                      <div 
+                      <div
                         key={device.id}
                         onClick={() => setDeviceId(device.id)}
                         className="flex items-center justify-between p-3 border rounded cursor-pointer hover:bg-gray-50"
