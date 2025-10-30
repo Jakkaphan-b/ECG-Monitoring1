@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db, rtdb } from '../../firebase';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, deleteField } from 'firebase/firestore';
 import { ref, onValue, off, set, get } from 'firebase/database';
 import { useNavigate } from 'react-router-dom';
 
@@ -320,6 +320,42 @@ const DeviceSetup = () => {
     }
   };
 
+  const deleteDeviceConfig = async () => {
+    if (!window.confirm('คุณต้องการลบข้อมูลอุปกรณ์นี้หรือไม่?')) return;
+    const user = auth.currentUser;
+    if (!user || !deviceId) return;
+    setIsLoading(true);
+    try {
+      // 1. ลบ ssid, password ออกจาก Firestore
+      const docRef = doc(db, 'devices', user.uid);
+      await updateDoc(docRef, {
+        'wifi_config.ssid': deleteField(),
+        'wifi_config.password': deleteField()
+      });
+
+      // 2. ลบ ssid, password ออกจาก RTDB wifi_config
+      const wifiConfigRef = ref(rtdb, `ecg_stream/${deviceId}/wifi_config`);
+      await set(wifiConfigRef, {
+        ssid: null,
+        password: null,
+        status: null
+      });
+
+      // 3. ส่ง flag ให้ device ลบ ssid/password ใน SPIFFS
+      const clearFlagRef = ref(rtdb, `ecg_stream/${deviceId}/clear_wifi_flag`);
+      await set(clearFlagRef, { clear: true, timestamp: Date.now() });
+
+      setWifiConfig({ ssid: '', password: '' });
+      setCurrentStep(2);
+      alert('ลบข้อมูลอุปกรณ์สำเร็จ กรุณาตั้งค่า WiFi ใหม่');
+    } catch (error) {
+      console.error('Error deleting device config:', error);
+      alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const renderInstructions = () => (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
       <h3 className="font-semibold text-blue-900 mb-4 flex items-center">
@@ -622,6 +658,13 @@ const DeviceSetup = () => {
                   className="flex-1 bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition-colors"
                 >
                   ไปดูข้อมูล ECG
+                </button>
+                <button
+                  onClick={deleteDeviceConfig}
+                  disabled={isLoading}
+                  className="px-6 py-3 border border-red-400 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                >
+                  {isLoading ? 'กำลังลบ...' : 'ลบอุปกรณ์'}
                 </button>
               </div>
             </div>

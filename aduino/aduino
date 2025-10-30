@@ -542,6 +542,68 @@ unsigned long lastRRInterval = 0;
 // ใช้ client แบบ secure สำหรับ HTTPS
 WiFiClientSecure secureClient;
 
+// Function declarations
+void sendWiFiConfig(const String &ssid, const String &password, const String &status);
+void checkClearWifiFlagAndDelete();
+
+// เพิ่มฟังก์ชันสำหรับตรวจสอบ clear_wifi_flag และลบไฟล์ SPIFFS
+void checkClearWifiFlagAndDelete() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  HTTPClient http;
+  String clearFlagUrl = String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/clear_wifi_flag.json";
+  
+  if (!http.begin(secureClient, clearFlagUrl)) {
+    return;
+  }
+  
+  int code = http.GET();
+  if (code == 200) {
+    String response = http.getString();
+    
+    // Parse JSON response
+    DynamicJsonDocument doc(256);
+    DeserializationError error = deserializeJson(doc, response);
+    
+    if (!error && doc.containsKey("clear") && doc["clear"].as<bool>() == true) {
+      Serial.println("🗑️  Clear WiFi flag detected! Deleting SPIFFS config...");
+      
+      // ลบไฟล์ WiFi config ใน SPIFFS
+      if (SPIFFS.exists(WIFI_CONFIG_PATH)) {
+        if (SPIFFS.remove(WIFI_CONFIG_PATH)) {
+          Serial.println("✅ WiFi config file deleted from SPIFFS successfully");
+        } else {
+          Serial.println("❌ Failed to delete WiFi config file from SPIFFS");
+        }
+      } else {
+        Serial.println("ℹ️  WiFi config file not found in SPIFFS");
+      }
+      
+      // ลบ flag จาก RTDB
+      HTTPClient http2;
+      if (http2.begin(secureClient, clearFlagUrl)) {
+        http2.addHeader("Content-Type", "application/json");
+        int deleteCode = http2.sendRequest("DELETE");
+        if (deleteCode == 200) {
+          Serial.println("✅ Clear WiFi flag removed from RTDB");
+        } else {
+          Serial.println("⚠️  Failed to remove clear WiFi flag from RTDB");
+        }
+        http2.end();
+      }
+      
+      // รีเซ็ตตัวแปร WiFi
+      wifi_ssid = "";
+      wifi_pass = "";
+      
+      Serial.println("🔄 Device will restart to apply changes...");
+      delay(2000);
+      ESP.restart();
+    }
+  }
+  http.end();
+}
+
 // ฟังก์ชันเสริมสำหรับการแสดงเวลาและ timestamp
 void printCurrentTime() {
   time_t now = time(nullptr);
@@ -1375,6 +1437,16 @@ void loop() {
     lastWiFiCheck = millis();
   }
   
+  // ตรวจสอบ clear_wifi_flag ทุก 5 วินาที
+  static unsigned long lastClearFlagCheck = 0;
+  if (millis() - lastClearFlagCheck > 5000) {
+    checkClearWifiFlagAndDelete();
+    lastClearFlagCheck = millis();
+  }
+    
+  wasConnected = isConnected;
+  lastWiFiCheck = millis();
+  
   int v = analogRead(ECG_PIN);  // 0–4095
   
   // ป้องกัน buffer overflow สำหรับ buf array
@@ -1513,7 +1585,7 @@ void sendWiFiConfig(const String &ssid, const String &password, const String &st
   
   // เพิ่ม timestamp
   time_t now = time(nullptr);
-  doc["timestamp"] = String((unsigned long)now);
+  doc["timestamp"] = (unsigned long)now;
 
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
