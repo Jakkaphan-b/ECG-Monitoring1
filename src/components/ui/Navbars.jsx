@@ -14,7 +14,8 @@ const Navbars = () => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setIsLoading(false);
-      const protectedRoutes = ['/dashboard', '/history', '/alerts', '/device-setup', '/profile', '/admin', '/caregiver'];
+      // const protectedRoutes = ['/dashboard', '/history', '/alerts', '/device-setup', '/profile', '/admin', '/caregiver'];
+      const protectedRoutes = ['/dashboard', '/alerts', '/device-setup', '/profile', '/admin', '/caregiver', '/care-team'];
       const currentPath = location.pathname;
       if (!currentUser && protectedRoutes.includes(currentPath)) {
         navigate('/');
@@ -55,31 +56,31 @@ const Navbars = () => {
                     onClick={() => navigate('/dashboard')} 
                     className={`px-3 py-2 rounded-md text-sm font-medium ${location.pathname === '/dashboard' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
                   >
-                    Dashboard
+                   หน้าหลัก
                   </button>
-                  <button 
+                  {/* <button 
                     onClick={() => navigate('/history')} 
                     className={`px-3 py-2 rounded-md text-sm font-medium ${location.pathname === '/history' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
                   >
                     History
-                  </button>
+                  </button> */}
                   <button 
                     onClick={() => navigate('/alerts')} 
                     className={`px-3 py-2 rounded-md text-sm font-medium ${location.pathname === '/alerts' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
                   >
-                    Alerts
+                    เเจ้งเตือน
                   </button>
                   <button 
                     onClick={() => navigate('/device-setup')} 
                     className={`px-3 py-2 rounded-md text-sm font-medium ${location.pathname === '/device-setup' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
                   >
-                    Device
+                   อุปกรณ์
                   </button>
                   <button 
                     onClick={() => navigate('/care-team')} 
                     className={`px-3 py-2 rounded-md text-sm font-medium ${location.pathname === '/care-team' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
                   >
-                    Care Team
+                    ทีมผู้ดูแล
                   </button>
                 </div>
               </div>
@@ -101,8 +102,14 @@ const Navbars = () => {
             {user ? (
               <>
                 <span className="hidden md:block text-sm text-gray-600">{user.email}</span>
-                <button onClick={() => navigate('/profile')} className="hidden md:block text-gray-500 hover:text-gray-700">Profile</button>
-                <button onClick={handleLogout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition-colors">Logout</button>
+                <button 
+                onClick={() => navigate('/profile')} className="hidden md:block text-gray-500 hover:text-gray-700">
+                  โปรไฟล์
+                  </button>
+                <button 
+                onClick={handleLogout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md transition-colors">
+                  ออกจากระบบ
+                </button>
               </>
             ) : (
               <>
@@ -125,9 +132,9 @@ const Navbars = () => {
               }}
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/dashboard' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
-              Dashboard
+              หน้าหลัก
             </button>
-            <button
+            {/* <button
               onClick={() => {
                 navigate('/history');
                 setIsMobileMenuOpen(false);
@@ -135,7 +142,7 @@ const Navbars = () => {
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/history' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
               History
-            </button>
+            </button> */}
             <button
               onClick={() => {
                 navigate('/alerts');
@@ -143,7 +150,7 @@ const Navbars = () => {
               }}
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/alerts' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
-              Alerts
+              แจ้งเตือน
             </button>
             <button
               onClick={() => {
@@ -152,7 +159,7 @@ const Navbars = () => {
               }}
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/device-setup' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
-              Device Setup
+              อุปกรณ์
             </button>
             <button
               onClick={() => {
@@ -161,7 +168,7 @@ const Navbars = () => {
               }}
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/care-team' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
-              Care Team
+              ทีมผู้ดูแล
             </button>
             <button
               onClick={() => {
@@ -170,7 +177,16 @@ const Navbars = () => {
               }}
               className={`block w-full text-left px-3 py-2 rounded-md text-base font-medium ${location.pathname === '/profile' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}`}
             >
-              Profile
+             โปรไฟล์
+            </button>
+            <button
+              onClick={() => {
+                handleLogout();
+                setIsMobileMenuOpen(false);
+              }}
+              className="block w-full text-left bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md text-base font-medium transition-colors"
+            >
+              ออกจากระบบ
             </button>
             <div className="pt-4 pb-3 border-t border-gray-200">
               <div className="px-3 text-sm text-gray-600">{user.email}</div>

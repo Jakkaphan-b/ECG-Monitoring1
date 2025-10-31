@@ -8,54 +8,20 @@ import { useNavigate } from 'react-router-dom';
 const Dashboard = () => {
   const [ecgData, setEcgData] = useState([]);
   const [deviceStatus, setDeviceStatus] = useState(null);
-  const [deviceId, setDeviceId] = useState('ECG_001'); // ใช้ default device ID
+  const [deviceId, setDeviceId] = useState('ECG_000'); // ใช้ default device ID
   const [heartRate, setHeartRate] = useState(null);
-  const [realtimeHeartRate, setRealtimeHeartRate] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadDeviceConfig();
-    // เริ่มดึงข้อมูล heart rate จาก Firebase Realtime Database
-    startRealtimeMonitoring();
-    
+
     return () => {
       if (deviceId) {
         ecgService.stopListening(deviceId);
       }
     };
   }, []);
-
-  // ฟังก์ชันดึงข้อมูล real-time จาก Firebase
-  const startRealtimeMonitoring = () => {
-    const fetchRealtimeData = async () => {
-      try {
-        // ดึงข้อมูล status (รวม heart rate)
-        const statusResponse = await fetch(
-          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/status.json'
-        );
-        const statusData = await statusResponse.json();
-        
-        if (statusData) {
-          setDeviceStatus(statusData);
-          if (statusData.heart_rate) {
-            setRealtimeHeartRate(statusData.heart_rate);
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching realtime data:', error);
-      }
-    };
-
-    // ดึงข้อมูลครั้งแรก
-    fetchRealtimeData();
-
-    // ตั้ง interval ดึงข้อมูลทุก 3 วินาที
-    const interval = setInterval(fetchRealtimeData, 3000);
-
-    // เก็บ interval ID ไว้ใน component
-    return () => clearInterval(interval);
-  };
 
   useEffect(() => {
     if (deviceId) {
@@ -64,10 +30,10 @@ const Dashboard = () => {
   }, [deviceId]);
 
   useEffect(() => {
-    // วิเคราะห์ heart rate ทุกครั้งที่มีข้อมูลใหม่
+    // ดึง heart_rate จาก ecgData record ล่าสุด
     if (ecgData.length > 0) {
-      const hr = ecgService.analyzeHeartRate(ecgData);
-      setHeartRate(hr);
+      const lastRecord = ecgData[ecgData.length - 1];
+      setHeartRate(lastRecord?.heart_rate || null);
     }
   }, [ecgData]);
 
@@ -81,7 +47,7 @@ const Dashboard = () => {
     try {
       const docRef = doc(db, 'devices', user.uid);
       const docSnap = await getDoc(docRef);
-      
+
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.device_id) {
@@ -113,29 +79,28 @@ const Dashboard = () => {
   };
 
   const getConnectionStatus = () => {
-  if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
+    if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
 
-  const now = Date.now();
-  const lastSeen = deviceStatus.last_seen || 0;
-  const timeout = 10000; // 10 วินาที (ปรับได้ตามต้องการ)
+    const now = Date.now();
+    const lastSeen = deviceStatus.last_seen || 0;
+    const timeout = 10000; // 10 วินาที (ปรับได้ตามต้องการ)
 
-  if (now - lastSeen > timeout) {
+    if (now - lastSeen > timeout) {
+      return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
+    }
+
+    if (deviceStatus.connected) {
+      return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
+    }
+
     return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
-  }
-
-  if (deviceStatus.connected) {
-    return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
-  }
-
-  return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
- };
+  };
 
   const getHeartRateStatus = () => {
-    // ใช้ realtime heart rate ก่อน, ถ้าไม่มีใช้ heart rate จาก analysis
-    const currentBpm = realtimeHeartRate || heartRate?.bpm;
-    
+    // ใช้ heart_rate จาก ecgData เท่านั้น
+    const currentBpm = heartRate;
+
     if (!currentBpm) return { icon: '💔', text: 'ไม่พบสัญญาณ', color: 'text-gray-500' };
-    
     if (currentBpm < 60) return { icon: '💙', text: 'ต่ำกว่าปกติ', color: 'text-blue-600' };
     if (currentBpm > 100) return { icon: '❤️', text: 'สูงกว่าปกติ', color: 'text-red-600' };
     return { icon: '💚', text: 'ปกติ', color: 'text-green-600' };
@@ -145,7 +110,7 @@ const Dashboard = () => {
   const generateDemoData = () => {
     const demoData = ecgService.generateDummyECGData();
     setEcgData(demoData);
-    
+
     // จำลอง device status
     setDeviceStatus({
       connected: true,
@@ -221,12 +186,9 @@ const Dashboard = () => {
               <div>
                 <p className="text-sm text-gray-600">อัตราการเต้นหัวใจ</p>
                 <p className={`text-2xl font-bold ${hrStatus.color}`}>
-                  {realtimeHeartRate || heartRate?.bpm || '--'}
-                  {(realtimeHeartRate || heartRate?.bpm) && <span className="text-sm ml-1">BPM</span>}
+                  {heartRate || '--'}
+                  {heartRate && <span className="text-sm ml-1">BPM</span>}
                 </p>
-                {realtimeHeartRate && (
-                  <p className="text-xs text-green-600">🔄 Real-time</p>
-                )}
               </div>
             </div>
           </div>
@@ -261,15 +223,15 @@ const Dashboard = () => {
 
         {/* ECG Chart */}
         <div className="mb-6">
-          <ECGChart 
-            width={1000} 
+          <ECGChart
+            width={1000}
             height={400}
             showGrid={true}
           />
         </div>
 
         {/* Detailed Analysis */}
-        {(realtimeHeartRate || heartRate) && (
+        {(heartRate) && (
           <div className="bg-white rounded-lg shadow p-6 mb-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               📋 การวิเคราะห์ที่ละเอียด
@@ -277,10 +239,10 @@ const Dashboard = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="text-center">
                 <p className="text-3xl font-bold text-blue-600">
-                  {realtimeHeartRate || heartRate?.bpm || '--'}
+                  {typeof heartRate === 'object' ? heartRate.bpm : heartRate || '--'}
                 </p>
                 <p className="text-sm text-gray-600">BPM</p>
-                {realtimeHeartRate && (
+                {heartRate && (
                   <p className="text-xs text-green-600">จาก Realtime Database</p>
                 )}
               </div>
@@ -318,21 +280,21 @@ const Dashboard = () => {
               <div>
                 <p className="text-sm text-gray-600">Last Seen</p>
                 <p className="font-medium">
-                  {deviceStatus.last_seen ? 
-                    new Date(deviceStatus.last_seen).toLocaleString() : 
-                    'N/A'
+                  {deviceStatus.last_seen
+                    ? new Date(deviceStatus.last_seen * 1000).toLocaleString()
+                    : 'N/A'
                   }
                 </p>
               </div>
-              <div>
+              {/* <div>
                 <p className="text-sm text-gray-600">Uptime</p>
                 <p className="font-medium">
-                  {deviceStatus.last_seen ? 
-                    Math.round((Date.now() - deviceStatus.last_seen) / 1000) + 's ago' : 
+                  {deviceStatus.last_seen ?
+                    Math.round((Date.now() - deviceStatus.last_seen) / 1000) + 's ago' :
                     'N/A'
                   }
                 </p>
-              </div>
+              </div> */}
             </div>
           </div>
         )}

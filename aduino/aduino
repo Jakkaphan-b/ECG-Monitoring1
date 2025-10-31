@@ -1444,8 +1444,7 @@ void loop() {
     lastClearFlagCheck = millis();
   }
     
-  wasConnected = isConnected;
-  lastWiFiCheck = millis();
+
   
   int v = analogRead(ECG_PIN);  // 0–4095
   
@@ -1548,15 +1547,16 @@ void sendStatus() {
   doc["rssi"] = WiFi.RSSI();            // dBm
   doc["firmware_version"] = "1.0.1";    // อัปเดตเวอร์ชัน
   
-  // เพิ่มค่า Heart Rate
+  <!-- // เพิ่มค่า Heart Rate
   int heartRate = getCurrentHeartRate();
   doc["heart_rate"] = heartRate;
-  doc["rr_interval"] = lastRRInterval;
+  doc["rr_interval"] = lastRRInterval; -->
   
   // เพิ่ม debug info
   Serial.println("Current timestamp: " + String((unsigned long)now) + " (" + String(ctime(&now)) + ")");
-  Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
-
+  //Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
+  Serial.println("Sending Status");
+  
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
 
