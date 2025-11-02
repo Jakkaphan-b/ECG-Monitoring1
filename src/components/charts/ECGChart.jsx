@@ -6,7 +6,6 @@ const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
   const [ecgData, setEcgData] = useState([]);
   const [status, setStatus] = useState({ connected: false, heart_rate: 0 });
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [lastECGUpdate, setLastECGUpdate] = useState(Date.now());
   
   // ฟังก์ชันสร้างข้อมูล ECG จำลอง
   const generateMockECGData = () => {
@@ -64,17 +63,6 @@ const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
     setLastUpdate(new Date());
   }, []);
 
-  // ตรวจสอบการ disconnect อัตโนมัติ (5 วินาที)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      // ถ้าเวลาปัจจุบันลบด้วยเวลาที่ข้อมูล ecgData อัปเดตล่าสุด > 5 วินาที
-      if (Date.now() - lastECGUpdate > 5000) {
-        setStatus(prev => ({ ...prev, connected: false }));
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [lastECGUpdate]);
-
   // ดึงข้อมูลจาก Firebase Realtime Database
   useEffect(() => {
     const fetchECGData = async () => {
@@ -114,7 +102,6 @@ const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
           console.log('Generated data points:', dataPoints.length, dataPoints.slice(0, 5)); // Debug log
           setEcgData(dataPoints);
           setLastUpdate(new Date());
-          setLastECGUpdate(Date.now()); // อัปเดตเวลาที่ได้รับข้อมูลล่าสุด
         } else {
           // ถ้าไม่มีข้อมูลจาก Firebase ให้สร้างข้อมูลจำลอง
           console.log('No ECG data found, generating mock data');

@@ -1,12 +1,17 @@
 // Firebase configuration and imports
 import { db } from '../../firebase.js';
-import { collection, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, setDoc, getDocs } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 // Firebase Realtime Database URL
-const databaseUrl = 'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data.json';
+function getDatabaseUrl(deviceId) {
+    return `https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/${deviceId}/ecg_data.json`;
+}
+
 
 // Function to fetch ECG data from Firebase
-function fetchECGData() {
+function fetchECGData(deviceId) {
+    const databaseUrl = getDatabaseUrl(deviceId);
     fetch(databaseUrl)
     .then(response => response.json())
     .then(data => {
@@ -23,17 +28,17 @@ function fetchECGData() {
             // If it's normal, check if it exceeds the specified time and delete it
             if (result.normal) {
                 const dataTime = new Date(ecgData.timestamp).getTime();
-                
-                // Set the time threshold (e.g., 1 hour = 3600000 milliseconds)
-                const timeThreshold = 3600000; // 1 hour
-                
+
+                // Set the time threshold (e.g., 10 minutes = 600000 milliseconds)
+                const timeThreshold = 10 * 60 * 1000; // 10 minutes
+
                 // Check if the data timestamp is older than the threshold and delete it
                 if (currentTime - dataTime > timeThreshold) {
-                    deleteECGData(timestamp); // Delete the normal ECG data
+                    deleteECGData(timestamp, deviceId); // Delete the normal ECG data
                 }
             } else {
                 // If abnormal, save the status to Firestore
-                saveStatusToFirestore(timestamp, result, ecgData);
+                saveStatusToFirestore(timestamp, ecgData, result.abnormalities);
             }
         }
     })
@@ -147,8 +152,8 @@ function determineAlertLevel(ecgData) {
 }
 
 // Function to delete ECG data from Realtime Database
-function deleteECGData(timestamp) {
-    const deleteUrl = `https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data/${timestamp}.json`;
+function deleteECGData(timestamp, deviceId) {
+   const deleteUrl = `https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/${deviceId}/ecg_data/${timestamp}.json`;
 
     fetch(deleteUrl, {
         method: 'DELETE'
@@ -165,17 +170,65 @@ function deleteECGData(timestamp) {
     });
 }
 
+// Function to get user's device IDs from Firestore
+async function getUserDeviceIds() {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    
+    if (!user) {
+        console.log('User not signed in');
+        return [];
+    }
+
+    try {
+        const devicesRef = collection(db, 'devices');
+        const snapshot = await getDocs(devicesRef);
+        const myDeviceIds = [];
+        
+        snapshot.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data.user_id === user.uid) {
+                myDeviceIds.push(docSnap.id);
+            }
+        });
+        
+        console.log(`Found ${myDeviceIds.length} devices for user: ${myDeviceIds.join(', ')}`);
+        return myDeviceIds;
+    } catch (error) {
+        console.error('Error fetching user devices:', error);
+        return [];
+    }
+}
+
+// Function to fetch ECG data for all user's devices
+async function fetchUserDevicesAndAnalyze() {
+    const deviceIds = await getUserDeviceIds();
+    
+    if (deviceIds.length === 0) {
+        console.log('No devices found for this user');
+        return;
+    }
+
+    // วนลูป fetch ECG data ของแต่ละ device
+    deviceIds.forEach(deviceId => {
+        console.log(`Analyzing ECG data for device: ${deviceId}`);
+        fetchECGData(deviceId);
+    });
+}
+
 // Export functions for use in other components
 export { 
     fetchECGData, 
     checkAbnormalValues, 
     saveStatusToFirestore,
-    deleteECGData 
+    deleteECGData,
+    getUserDeviceIds,
+    fetchUserDevicesAndAnalyze
 };
 
 // Auto-start ECG monitoring when module is imported
 console.log('ECG Analysis Service Started');
-fetchECGData();
+fetchUserDevicesAndAnalyze();
 
 // Check for new ECG data every minute
-setInterval(fetchECGData, 60000);
+setInterval(fetchUserDevicesAndAnalyze, 60000);

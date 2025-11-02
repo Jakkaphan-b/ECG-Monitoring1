@@ -66,6 +66,8 @@ const Dashboard = () => {
     }
   };
 
+  
+
   const startECGMonitoring = () => {
     // ฟัง ECG data
     ecgService.startListening(deviceId, (data) => {

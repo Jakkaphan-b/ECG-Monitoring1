@@ -492,8 +492,10 @@ const char* config_html = R"rawliteral(
 </html>
 )rawliteral";
 
-String chunksUrl() { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/chunks.json"; }
+// URL functions for new Firebase structure
 String statusUrl() { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/status.json"; }
+String wifiConfigUrl() { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/wifi_config.json"; }
+String ecgDataUrl(unsigned long timestamp) { return String(RTDB_HOST) + "/ecg_stream/" + DEVICE_ID + "/ecg_data/" + String(timestamp) + ".json"; }
 
 const int ECG_PIN = 34;       // ADC1
 #define SAMPLE_RATE 250       // Hz
@@ -502,6 +504,26 @@ const int ECG_PIN = 34;       // ADC1
 int buf[CHUNK_SIZE];
 int idxBuf = 0;
 unsigned long lastStatus = 0;
+
+// ECG Analysis Variables for new structure
+float p_wave_amplitude = 0.0;
+float qrs_amplitude = 0.0;
+float t_wave_amplitude = 0.0;
+float qrs_interval = 0.0;
+float pr_interval = 0.0;
+float qt_interval = 0.0;
+
+// ECG Analysis Buffer และตัวแปรสำหรับวิเคราะห์คลื่น
+#define ANALYSIS_WINDOW 200   // 800ms ที่ 250Hz สำหรับวิเคราะห์ 1 heart beat
+int analysisBuf[ANALYSIS_WINDOW];
+int analysisIdx = 0;
+bool analysisReady = false;
+
+// Baseline calculation
+#define BASELINE_WINDOW 50
+int baselineSum = 0;
+int baselineCount = 0;
+int baseline = 2048; // ค่า baseline เริ่มต้น (กึ่งกลาง 12-bit ADC)
 
 // Heart Rate Detection Variables
 #define HR_WINDOW_SIZE 8
@@ -567,9 +589,15 @@ void detectRPeakAndCalculateHR(int ecgValue) {
         }
         currentHeartRate = sum / count;
         
+        // เมื่อตรวจพบ R-peak ให้ทำการวิเคราะห์คลื่น ECG ในบริเวณนั้น
+        analysisReady = true;
+        
         Serial.println("💓 R-peak detected! RR: " + String(rrInterval) + 
                       "ms, Instant HR: " + String(instantHR) + 
                       " BPM, Avg HR: " + String(currentHeartRate) + " BPM");
+        
+        // ส่งข้อมูล ECG analysis ทันทีเมื่อตรวจพบ R-peak
+        sendECGAnalysis();
       }
     }
     
@@ -593,6 +621,131 @@ int getCurrentHeartRate() {
     return 0;
   }
   return currentHeartRate;
+}
+
+// ฟังก์ชันอัปเดต baseline (ค่าเฉลี่ยของสัญญาณ)
+void updateBaseline(int ecgValue) {
+  baselineSum += ecgValue;
+  baselineCount++;
+  
+  if (baselineCount >= BASELINE_WINDOW) {
+    baseline = baselineSum / baselineCount;
+    baselineSum = 0;
+    baselineCount = 0;
+  }
+}
+
+// ฟังก์ชันวิเคราะห์คลื่น ECG จากข้อมูลจริง
+void analyzeECGWaveform() {
+  if (!analysisReady) return;
+  
+  // ตรวจสอบว่า buffer มีข้อมูลเพียงพอ (อย่างน้อย 50% ของ window)
+  static int bufferFillCount = 0;
+  bufferFillCount++;
+  if (bufferFillCount < ANALYSIS_WINDOW / 2) {
+    analysisReady = false;
+    return;
+  }
+  
+  // หาจุดสูงสุดและต่ำสุดใน buffer
+  int maxVal = 0, minVal = 4095;
+  int maxPos = 0, minPos = 0;
+  
+  for (int i = 0; i < ANALYSIS_WINDOW; i++) {
+    if (analysisBuf[i] > maxVal) {
+      maxVal = analysisBuf[i];
+      maxPos = i;
+    }
+    if (analysisBuf[i] < minVal) {
+      minVal = analysisBuf[i];
+      minPos = i;
+    }
+  }
+  
+  // คำนวณ QRS amplitude (จากจุดสูงสุดและต่ำสุด)
+  qrs_amplitude = ((maxVal - baseline) * 3.3 / 4095.0); // แปลงเป็นโวลต์
+  
+  // หา QRS interval โดยหาช่วงที่สูงกว่า 60% ของ peak
+  int threshold = baseline + (maxVal - baseline) * 0.6;
+  int qrs_start = -1, qrs_end = -1;
+  
+  // หาจุดเริ่มต้น QRS (จากซ้ายของ peak)
+  for (int i = maxPos; i >= 0; i--) {
+    if (analysisBuf[i] < threshold) {
+      qrs_start = i;
+      break;
+    }
+  }
+  
+  // หาจุดสิ้นสุด QRS (จากขวาของ peak)
+  for (int i = maxPos; i < ANALYSIS_WINDOW; i++) {
+    if (analysisBuf[i] < threshold) {
+      qrs_end = i;
+      break;
+    }
+  }
+  
+  // คำนวณ QRS interval (ในหน่วยวินาที)
+  if (qrs_start >= 0 && qrs_end >= 0 && qrs_end > qrs_start) {
+    qrs_interval = (qrs_end - qrs_start) * (1.0 / SAMPLE_RATE);
+  } else {
+    qrs_interval = 0.08; // ค่า default ถ้าหาไม่เจอ
+  }
+  
+  // หา P-wave (ก่อน QRS complex)
+  // มองหา peak ใน 40 ตัวอย่างก่อนหน้า QRS
+  int p_search_start = max(0, qrs_start - 40);
+  int p_search_end = max(0, qrs_start - 5);
+  int p_max = baseline;
+  
+  for (int i = p_search_start; i < p_search_end; i++) {
+    if (analysisBuf[i] > p_max) {
+      p_max = analysisBuf[i];
+    }
+  }
+  p_wave_amplitude = ((p_max - baseline) * 3.3 / 4095.0);
+  if (p_wave_amplitude < 0.05) p_wave_amplitude = 0.0; // ถ้าต่ำเกินไปให้เป็น 0
+  
+  // หา T-wave (หลัง QRS complex)
+  // มองหา peak ใน 60 ตัวอย่างหลังจาก QRS
+  int t_search_start = min(ANALYSIS_WINDOW-1, qrs_end + 10);
+  int t_search_end = min(ANALYSIS_WINDOW-1, qrs_end + 60);
+  int t_max = baseline;
+  
+  for (int i = t_search_start; i < t_search_end; i++) {
+    if (analysisBuf[i] > t_max) {
+      t_max = analysisBuf[i];
+    }
+  }
+  t_wave_amplitude = ((t_max - baseline) * 3.3 / 4095.0);
+  if (t_wave_amplitude < 0.05) t_wave_amplitude = 0.0; // ถ้าต่ำเกินไปให้เป็น 0
+  
+  // คำนวณ PR interval (จาก P-wave ถึง QRS)
+  if (p_wave_amplitude > 0.05 && qrs_start >= 0) {
+    int p_pos = p_search_start + (p_search_end - p_search_start) / 2; // ประมาณตำแหน่ง P
+    pr_interval = (qrs_start - p_pos) * (1.0 / SAMPLE_RATE);
+    if (pr_interval < 0.1 || pr_interval > 0.3) pr_interval = 0.16; // ค่า default ถ้าผิดปกติ
+  } else {
+    pr_interval = 0.16; // ค่า default
+  }
+  
+  // คำนวณ QT interval (จาก QRS ถึง T-wave)
+  if (t_wave_amplitude > 0.05 && qrs_start >= 0) {
+    int t_pos = t_search_start + (t_search_end - t_search_start) / 2; // ประมาณตำแหน่ง T
+    qt_interval = (t_pos - qrs_start) * (1.0 / SAMPLE_RATE);
+    if (qt_interval < 0.3 || qt_interval > 0.5) qt_interval = 0.40; // ค่า default ถ้าผิดปกติ
+  } else {
+    qt_interval = 0.40; // ค่า default
+  }
+  
+  analysisReady = false; // รีเซ็ตสถานะ
+  
+  Serial.println("📊 ECG Analysis - QRS: " + String(qrs_amplitude, 3) + "V, " +
+                "P: " + String(p_wave_amplitude, 3) + "V, " +
+                "T: " + String(t_wave_amplitude, 3) + "V");
+  Serial.println("⏱️  Intervals - QRS: " + String(qrs_interval, 3) + "s, " +
+                "PR: " + String(pr_interval, 3) + "s, " +
+                "QT: " + String(qt_interval, 3) + "s");
 }
 
 // ฟังก์ชันแสดงผลบน OLED
@@ -663,7 +816,13 @@ void updateOLED() {
   // แสดงข้อมูลเพิ่มเติมที่มุมล่าง
   display.setCursor(0, 56);
   display.setTextSize(1);
-  if (lastRRInterval > 0) {
+  
+  // แสดงข้อมูลวิเคราะห์ ECG หรือ RR interval
+  if (qrs_amplitude > 0.0) {
+    display.print("QRS:");
+    display.print(qrs_amplitude, 1);
+    display.print("V");
+  } else if (lastRRInterval > 0) {
     display.print("RR:");
     display.print(lastRRInterval);
     display.print("ms");
@@ -830,6 +989,10 @@ void handleSave() {
   Serial.println("Trimmed Password length: " + String(pass.length()));
   
   saveConfigToSPIFFS(ssid, pass);
+  
+  // ส่งข้อมูล WiFi config ไป Firebase ด้วยสถานะ "pending"
+  sendWiFiConfig(ssid, pass, "pending");
+  
   configServer.send(200, "text/plain", "Configuration saved. Connecting...");
   
   delay(1000);
@@ -896,11 +1059,18 @@ void handleSave() {
     Serial.println("╚═══════════════════════════════════════╝");
     Serial.println("🎉 Ready to start ECG monitoring!");
     Serial.println("================================");
+    
+    // อัปเดตสถานะ WiFi config เป็น "connected"
+    sendWiFiConfig(ssid, pass, "connected");
+    
     delay(2000);
     ESP.restart();
   } else {
     Serial.println("\nFailed to connect with new credentials");
     Serial.println("WiFi Status: " + String(WiFi.status()));
+    
+    // อัปเดตสถานะ WiFi config เป็น "failed"
+    sendWiFiConfig(ssid, pass, "failed");
   }
 }
 
@@ -1098,6 +1268,15 @@ void setup() {
   // ทดสอบง่าย ๆ (ไม่ตรวจ CA) — สำหรับ Production ควรใส่ root CA จริง
   secureClient.setInsecure();
   
+  // ส่งข้อมูล WiFi config ปัจจุบันไป Firebase
+  if (WiFi.status() == WL_CONNECTED) {
+    String current_ssid, current_pass;
+    if (loadConfigFromSPIFFS(current_ssid, current_pass)) {
+      sendWiFiConfig(current_ssid, current_pass, "connected");
+      Serial.println("📤 Sent current WiFi config to Firebase");
+    }
+  }
+  
   Serial.println("=== ECG Monitoring Started ===");
   Serial.println("Sampling Rate: " + String(SAMPLE_RATE) + " Hz");
   Serial.println("Chunk Size: " + String(CHUNK_SIZE) + " samples");
@@ -1138,8 +1317,18 @@ void loop() {
   int v = analogRead(ECG_PIN);  // 0–4095
   buf[idxBuf++] = v;
 
+  // เก็บข้อมูลลง analysis buffer สำหรับการวิเคราะห์คลื่น ECG
+  analysisBuf[analysisIdx] = v;
+  analysisIdx = (analysisIdx + 1) % ANALYSIS_WINDOW;
+  
+  // อัปเดต baseline
+  updateBaseline(v);
+
   // ตรวจจับ R-peak และคำนวณ Heart Rate
   detectRPeakAndCalculateHR(v);
+  
+  // วิเคราะห์คลื่น ECG หลังจากตรวจพบ R-peak
+  analyzeECGWaveform();
 
   // อัปเดต OLED Display ทุก 100ms เพื่อให้ smooth มากขึ้น
   static unsigned long lastOLEDUpdate = 0;
@@ -1148,10 +1337,7 @@ void loop() {
     lastOLEDUpdate = millis();
   }
 
-  if (idxBuf >= CHUNK_SIZE) {
-    sendChunk(buf, CHUNK_SIZE);
-    idxBuf = 0;
-  }
+  // เก็บข้อมูล ECG แต่ไม่ส่งแบบ chunk แล้ว (ข้อมูล analysis จะส่งเมื่อมี R-peak)
 
   if (millis() - lastStatus > 5000) {
     sendStatus();
@@ -1181,35 +1367,9 @@ void loop() {
 }
 
 void sendChunk(int* data, int n) {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  HTTPClient http;
-  // ใช้ secure client
-  if (!http.begin(secureClient, chunksUrl())) {
-    Serial.println("begin() failed");
-    return;
-  }
-  http.addHeader("Content-Type", "application/json");
-
-  DynamicJsonDocument doc(2048);
-  doc["sampleRate"] = SAMPLE_RATE;
-  
-  // ใช้ Unix timestamp (milliseconds) สำหรับ ts
-  time_t now = time(nullptr);
-  unsigned long timestamp_ms = (unsigned long)now * 1000;
-  doc["ts"] = timestamp_ms;
-  
-  JsonArray arr = doc.createNestedArray("values");
-  for (int i = 0; i < n; i++) arr.add(data[i]);
-
-  String body; serializeJson(doc, body);
-  int code = http.POST(body);
-
-  Serial.printf("POST chunk %d vals -> %d\n", n, code);
-  if (code > 0 && code != 200) {
-    Serial.println(http.getString());
-  }
-  http.end();
+  // ฟังก์ชันนี้ไม่ใช้แล้วในโครงสร้างใหม่
+  // ข้อมูล ECG จะส่งผ่าน sendECGAnalysis() เมื่อตรวจพบ R-peak
+  Serial.println("sendChunk() is deprecated in new structure");
 }
 
 void sendStatus() {
@@ -1225,13 +1385,13 @@ void sendStatus() {
   DynamicJsonDocument doc(512);
   doc["connected"] = true;
   
-  // ใช้ Unix timestamp (milliseconds) แทน millis() สำหรับ last_seen
+  // ใช้ Unix timestamp (milliseconds) แทน millis() สำหรับ last_seen และ timestamp
   time_t now = time(nullptr);
   unsigned long timestamp_ms = (unsigned long)now * 1000;
   doc["last_seen"] = timestamp_ms;
+  doc["timestamp"] = String(timestamp_ms);
   
   doc["rssi"] = WiFi.RSSI();            // dBm
-  doc["battery"] = nullptr;             // ถ้ามีวงจรวัดแบต ให้ใส่ %
   doc["firmware_version"] = "1.0.1";    // อัปเดตเวอร์ชัน
   
   // เพิ่มค่า Heart Rate
@@ -1241,12 +1401,77 @@ void sendStatus() {
   
   // เพิ่ม debug info
   Serial.println("Current timestamp: " + String(timestamp_ms) + " (" + String(ctime(&now)) + ")");
-  Serial.println("Sending Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
+  Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
 
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
 
   Serial.printf("PUT status -> %d\n", code);
+  if (code > 0 && code != 200) {
+    Serial.println(http.getString());
+  }
+  http.end();
+}
+
+// ฟังก์ชันใหม่สำหรับส่งข้อมูล WiFi config
+void sendWiFiConfig(const String &ssid, const String &password, const String &status) {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  if (!http.begin(secureClient, wifiConfigUrl())) {
+    Serial.println("WiFi config begin() failed");
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+
+  DynamicJsonDocument doc(512);
+  doc["ssid"] = ssid;
+  doc["password"] = password;
+  doc["status"] = status;
+  
+  // เพิ่ม timestamp
+  time_t now = time(nullptr);
+  unsigned long timestamp_ms = (unsigned long)now * 1000;
+  doc["timestamp"] = String(timestamp_ms);
+
+  String body; serializeJson(doc, body);
+  int code = http.PUT(body);
+
+  Serial.printf("PUT wifi_config -> %d\n", code);
+  if (code > 0 && code != 200) {
+    Serial.println(http.getString());
+  }
+  http.end();
+}
+
+// ฟังก์ชันใหม่สำหรับส่งข้อมูล ECG analysis
+void sendECGAnalysis() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  // ใช้ timestamp ปัจจุบันเป็น key
+  time_t now = time(nullptr);
+  unsigned long timestamp_ms = (unsigned long)now * 1000;
+
+  HTTPClient http;
+  if (!http.begin(secureClient, ecgDataUrl(timestamp_ms))) {
+    Serial.println("ECG data begin() failed");
+    return;
+  }
+  http.addHeader("Content-Type", "application/json");
+
+  DynamicJsonDocument doc(512);
+  doc["p_wave_amplitude"] = p_wave_amplitude;
+  doc["qrs_amplitude"] = qrs_amplitude;
+  doc["t_wave_amplitude"] = t_wave_amplitude;
+  doc["heart_rate"] = getCurrentHeartRate();
+  doc["qrs_interval"] = qrs_interval;
+  doc["pr_interval"] = pr_interval;
+  doc["qt_interval"] = qt_interval;
+
+  String body; serializeJson(doc, body);
+  int code = http.PUT(body);
+
+  Serial.printf("PUT ecg_data/%lu -> %d\n", timestamp_ms, code);
   if (code > 0 && code != 200) {
     Serial.println(http.getString());
   }

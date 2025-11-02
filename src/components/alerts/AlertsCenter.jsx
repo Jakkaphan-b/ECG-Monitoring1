@@ -3,7 +3,8 @@ import { auth, db } from '../../firebase';
 import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 // Import ECG analysis service เพื่อให้เริ่มทำงานอัตโนมัติ
-// import '../analyze/analyze-ecg.js';
+import '../analyze/analyze-ecg.js';
+import { getUserDeviceIds } from '../analyze/analyze-ecg.js';
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
@@ -64,29 +65,36 @@ const AlertsCenter = () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      // ดึงข้อมูลจาก ecg_status collection แทน alerts
-      const alertsQuery = query(
-        collection(db, 'ecg_status'),
-        orderBy('created_at', 'desc')
-      );
+      // ดึง deviceId ที่ user เป็นเจ้าของ
+      const deviceIds = await getUserDeviceIds();
+      let allAlerts = [];
 
-      const alertsSnapshot = await getDocs(alertsQuery);
-      const alertsData = alertsSnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          // แปลงข้อมูลให้เข้ากับ UI
-          type: data.status === 'abnormal' ? 'ecg_abnormal' : 'ecg_normal',
-          message: generateAlertMessage(data),
-          timestamp: data.created_at?.toDate() || new Date(),
-          severity: data.alert_level || 'medium',
-          read: false, // default ยังไม่อ่าน
-          device_id: data.device_id || 'ECG_001'
-        };
-      });
+      for (const deviceId of deviceIds) {
+        // Query ที่ subcollection events ของแต่ละ device
+        const eventsCol = collection(db, 'ecg_status', deviceId, 'events');
+        const eventsQuery = query(eventsCol, orderBy('created_at', 'desc'));
+        const eventsSnapshot = await getDocs(eventsQuery);
 
-      setAlerts(alertsData);
+        const alertsData = eventsSnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            type: data.status === 'abnormal' ? 'ecg_abnormal' : 'ecg_normal',
+            message: generateAlertMessage(data),
+            timestamp: data.created_at?.toDate() || new Date(),
+            severity: data.alert_level || 'medium',
+            read: false,
+            device_id: data.device_id || deviceId
+          };
+        });
+
+        allAlerts = allAlerts.concat(alertsData);
+      }
+
+      // รวมและ sort ตามเวลา
+      allAlerts.sort((a, b) => b.timestamp - a.timestamp);
+      setAlerts(allAlerts);
     } catch (error) {
       console.error('Error fetching ECG alerts:', error);
       alert('เกิดข้อผิดพลาดในการโหลดการแจ้งเตือน ECG');
@@ -141,10 +149,10 @@ const AlertsCenter = () => {
     setFilteredAlerts(filtered);
   };
 
-  const markAsRead = async (alertId) => {
+  const markAsRead = async (alertId, deviceId) => {
     try {
-      // อัปเดตใน ecg_status collection
-      await updateDoc(doc(db, 'ecg_status', alertId), {
+      // อัปเดตใน ecg_status/{deviceId}/events/{alertId}
+      await updateDoc(doc(db, 'ecg_status', deviceId, 'events', alertId), {
         read: true,
         read_at: new Date()
       });
@@ -407,7 +415,7 @@ const AlertsCenter = () => {
                     <div className="flex space-x-2">
                       {!alert.read && (
                         <button
-                          onClick={() => markAsRead(alert.id)}
+                          onClick={() => markAsRead(alert.id, alert.device_id)}
                           className="text-blue-600 hover:text-blue-800 text-sm"
                         >
                           ทำเครื่องหมายอ่านแล้ว
