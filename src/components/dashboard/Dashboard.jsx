@@ -29,13 +29,17 @@ const Dashboard = () => {
     }
   }, [deviceId]);
 
+  // ฟัง heart_rate จาก ecg_data path
   useEffect(() => {
-    // ดึง heart_rate จาก ecgData record ล่าสุด
-    if (ecgData.length > 0) {
-      const lastRecord = ecgData[ecgData.length - 1];
-      setHeartRate(lastRecord?.heart_rate || null);
+    if (deviceId) {
+      const unsubscribe = ecgService.getLatestHeartRate(deviceId, (hr) => {
+        setHeartRate(hr);
+      });
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
     }
-  }, [ecgData]);
+  }, [deviceId]);
 
   const loadDeviceConfig = async () => {
     const user = auth.currentUser;
@@ -80,23 +84,17 @@ const Dashboard = () => {
     });
   };
 
-  const getConnectionStatus = () => {
-    if (!deviceStatus) return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
+const getConnectionStatus = () => {
+  if (!deviceStatus || typeof deviceStatus.connected === 'undefined') {
+    return { icon: '🔴', text: 'ไม่ทราบสถานะ', color: 'text-gray-500' };
+  }
 
-    const now = Date.now();
-    const lastSeen = deviceStatus.last_seen || 0;
-    const timeout = 10000; // 10 วินาที (ปรับได้ตามต้องการ)
-
-    if (now - lastSeen > timeout) {
-      return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
-    }
-
-    if (deviceStatus.connected) {
-      return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
-    }
-
+  if (deviceStatus.connected === true) {
+    return { icon: '🟢', text: 'เชื่อมต่อแล้ว', color: 'text-green-600' };
+  } else {
     return { icon: '🔴', text: 'ยังไม่เชื่อมต่อ', color: 'text-red-600' };
-  };
+  }
+};
 
   const getHeartRateStatus = () => {
     // ใช้ heart_rate จาก ecgData เท่านั้น

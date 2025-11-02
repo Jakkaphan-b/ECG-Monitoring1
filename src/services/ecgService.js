@@ -70,16 +70,18 @@ export class ECGService {
   }
 
   // ฟัง real-time status
-  listenToDeviceStatus(deviceId, callback) {
-    const statusRef = ref(rtdb, `ecg_stream/${deviceId}/status`);
-    
-    const unsubscribe = onValue(statusRef, (snapshot) => {
-      const status = snapshot.exists() ? snapshot.val() : null;
-      callback(status);
-    });
-
-    return unsubscribe;
-  }
+listenToDeviceStatus(deviceId, callback) {
+  // ต้องอ่าน path status (object)
+  const statusRef = ref(rtdb, `ecg_stream/${deviceId}/status`);
+  const unsubscribe = onValue(statusRef, (snapshot) => {
+    if (snapshot.exists()) {
+      callback(snapshot.val());
+    } else {
+      callback(null);
+    }
+  });
+  return unsubscribe;
+}
 
   // วิเคราะห์ heart rate
   analyzeHeartRate(data, windowSize = 1250) { // 5 seconds at 250Hz
@@ -203,6 +205,29 @@ export class ECGService {
     this.ecgData = data;
     return data;
   }
+
+  // ดึง heart rate ล่าสุดจาก ecg_data
+  getLatestHeartRate(deviceId, callback) {
+    const ecgDataRef = ref(rtdb, `ecg_stream/${deviceId}/ecg_data`);
+    const unsubscribe = onValue(ecgDataRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const timestamps = Object.keys(data);
+        if (timestamps.length > 0) {
+          const latest = timestamps.sort().reverse()[0];
+          const latestData = data[latest];
+          callback(latestData.heart_rate || null);
+        } else {
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
+    });
+    return unsubscribe;
+  }
 }
+
+
 
 export const ecgService = new ECGService();
