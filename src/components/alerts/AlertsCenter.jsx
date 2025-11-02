@@ -2,15 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase';
 import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-// Import ECG analysis service เพื่อให้เริ่มทำงานอัตโนมัติ
-import '../analyze/analyze-ecg.js';
-import { getUserDeviceIds } from '../analyze/analyze-ecg.js';
+
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
   const [filteredAlerts, setFilteredAlerts] = useState([]);
   const [careTeam, setCareTeam] = useState([]);
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState({ 
     type: 'all',
     status: 'all',
     user: 'all'
@@ -59,6 +57,21 @@ const AlertsCenter = () => {
     applyFilters();
   }, [alerts, filters]);
 
+  // ฟังก์ชันดึง deviceId ที่ user เป็นเจ้าของ
+  const getUserDeviceIds = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return [];
+
+      const q = query(collection(db, "devices"), where("user_id", "==", user.uid));
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => doc.data().device_id || doc.id);
+    } catch (error) {
+      console.error("Error fetching user devices:", error);
+      return [];
+    }
+  };
+
   const fetchAlerts = async () => {
     setLoading(true);
     try {
@@ -80,12 +93,13 @@ const AlertsCenter = () => {
           return {
             id: doc.id,
             ...data,
-            type: data.status === 'abnormal' ? 'ecg_abnormal' : 'ecg_normal',
+            type: 'ecg_abnormal', // เนื่องจากข้อมูลใน ecg_status เป็นผิดปกติทั้งหมด
             message: generateAlertMessage(data),
             timestamp: data.created_at?.toDate() || new Date(),
             severity: data.alert_level || 'medium',
             read: false,
-            device_id: data.device_id || deviceId
+            device_id: data.device_id || deviceId,
+            status: 'unread'
           };
         });
 
@@ -158,7 +172,7 @@ const AlertsCenter = () => {
       });
 
       setAlerts(alerts.map(alert => 
-        alert.id === alertId ? { ...alert, read: true } : alert
+        alert.id === alertId ? { ...alert, read: true, status: 'read' } : alert
       ));
     } catch (error) {
       console.error('Error marking alert as read:', error);

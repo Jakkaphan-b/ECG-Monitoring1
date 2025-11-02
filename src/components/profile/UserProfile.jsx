@@ -183,7 +183,7 @@ const UserProfile = () => {
                 { id: 'profile', name: 'ข้อมูลส่วนตัว', icon: '👤' },
                 { id: 'medical', name: 'ข้อมูลทางการแพทย์', icon: '🏥' },
                 { id: 'security', name: 'ความปลอดภัย', icon: '🔒' },
-                { id: 'notifications', name: 'การแจ้งเตือน', icon: '🔔' }
+                // { id: 'notifications', name: 'การแจ้งเตือน', icon: '🔔' }
               ].map((tab) => (
                 <button
                   key={tab.id}
