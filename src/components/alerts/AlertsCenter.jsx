@@ -8,7 +8,7 @@ const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
   const [filteredAlerts, setFilteredAlerts] = useState([]);
   const [careTeam, setCareTeam] = useState([]);
-  const [filters, setFilters] = useState({ 
+  const [filters, setFilters] = useState({
     type: 'all',
     status: 'all',
     user: 'all'
@@ -19,13 +19,13 @@ const AlertsCenter = () => {
   // ฟังก์ชันสร้างข้อความแจ้งเตือนตามข้อมูล ECG
   const generateAlertMessage = (data) => {
     const { abnormalities, ecg_data, alert_level } = data;
-    
+
     if (!abnormalities || abnormalities.length === 0) {
       return `ECG ผิดปกติ - Heart Rate: ${ecg_data?.heart_rate} BPM`;
     }
 
     const messages = [];
-    
+
     if (abnormalities.includes('bradycardia')) {
       messages.push(`อัตราการเต้นหัวใจช้า (${ecg_data?.heart_rate} BPM)`);
     }
@@ -65,7 +65,8 @@ const AlertsCenter = () => {
 
       const q = query(collection(db, "devices"), where("user_id", "==", user.uid));
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => doc.data().device_id || doc.id);
+      // เปลี่ยนจาก doc.id เป็น doc.data().device_id
+      return snapshot.docs.map(doc => doc.data().device_id);
     } catch (error) {
       console.error("Error fetching user devices:", error);
       return [];
@@ -83,8 +84,8 @@ const AlertsCenter = () => {
       let allAlerts = [];
 
       for (const deviceId of deviceIds) {
-        // Query ที่ subcollection events ของแต่ละ device
-        const eventsCol = collection(db, 'ecg_status', deviceId, 'events');
+        // Query ที่ path ใหม่: ecg_status/{uid}/{device_id}
+        const eventsCol = collection(db, 'ecg_status', user.uid, deviceId);
         const eventsQuery = query(eventsCol, orderBy('created_at', 'desc'));
         const eventsSnapshot = await getDocs(eventsQuery);
 
@@ -97,9 +98,9 @@ const AlertsCenter = () => {
             message: generateAlertMessage(data),
             timestamp: data.created_at?.toDate() || new Date(),
             severity: data.alert_level || 'medium',
-            read: false,
+            read: data.read === true, // ใช้ค่าจาก Firestore
             device_id: data.device_id || deviceId,
-            status: 'unread'
+            status: data.read === true ? 'read' : 'unread' // อิงจาก read จริง
           };
         });
 
@@ -155,7 +156,7 @@ const AlertsCenter = () => {
     }
 
     if (filters.status !== 'all') {
-      filtered = filtered.filter(alert => 
+      filtered = filtered.filter(alert =>
         filters.status === 'read' ? alert.read : !alert.read
       );
     }
@@ -165,13 +166,16 @@ const AlertsCenter = () => {
 
   const markAsRead = async (alertId, deviceId) => {
     try {
-      // อัปเดตใน ecg_status/{deviceId}/events/{alertId}
-      await updateDoc(doc(db, 'ecg_status', deviceId, 'events', alertId), {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      // อัปเดตใน ecg_status/{uid}/{deviceId}/{alertId}
+      await updateDoc(doc(db, 'ecg_status', user.uid, deviceId, alertId), {
         read: true,
         read_at: new Date()
       });
 
-      setAlerts(alerts.map(alert => 
+      setAlerts(alerts.map(alert =>
         alert.id === alertId ? { ...alert, read: true, status: 'read' } : alert
       ));
     } catch (error) {
@@ -184,7 +188,7 @@ const AlertsCenter = () => {
       // สร้างการแจ้งเตือนสำหรับทีมผู้ดูแลที่เปิดการแจ้งเตือน
       const notificationsPromises = careTeam
         .filter(member => member.notifications_enabled)
-        .map(member => 
+        .map(member =>
           addDoc(collection(db, 'care_team_notifications'), {
             care_team_member_id: member.id,
             patient_id: auth.currentUser.uid,
@@ -238,7 +242,7 @@ const AlertsCenter = () => {
               จัดการทีม
             </button>
           </div>
-          
+
           {careTeam.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {careTeam.map((member) => (
@@ -253,11 +257,10 @@ const AlertsCenter = () => {
                       <h3 className="font-medium text-gray-900">{member.name}</h3>
                       <p className="text-sm text-gray-500 capitalize">{member.role}</p>
                       <div className="flex items-center space-x-2 mt-1">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          member.notifications_enabled 
-                            ? 'bg-green-100 text-green-800' 
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${member.notifications_enabled
+                            ? 'bg-green-100 text-green-800'
                             : 'bg-gray-100 text-gray-800'
-                        }`}>
+                          }`}>
                           {member.notifications_enabled ? 'แจ้งเตือนเปิด' : 'แจ้งเตือนปิด'}
                         </span>
                       </div>
@@ -328,7 +331,7 @@ const AlertsCenter = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">ข้อมูล</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'info').length}
+                  {alerts.filter(alert => alert.severity === 'low').length}
                 </p>
               </div>
             </div>
@@ -367,6 +370,18 @@ const AlertsCenter = () => {
                 <option value="medium_severity">คำเตือน</option>
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">สถานะ</label>
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              >
+                <option value="all">ทั้งหมด</option>
+                <option value="read">อ่านแล้ว</option>
+                <option value="unread">ยังไม่อ่าน</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -382,26 +397,24 @@ const AlertsCenter = () => {
               {filteredAlerts.map((alert) => (
                 <div
                   key={alert.id}
-                  className={`p-4 rounded-lg border-l-4 ${
-                    alert.severity === 'high'
+                  className={`p-4 rounded-lg border-l-4 ${alert.severity === 'high'
                       ? 'border-red-500 bg-red-50'
                       : alert.severity === 'medium'
-                      ? 'border-yellow-500 bg-yellow-50'
-                      : 'border-blue-500 bg-blue-50'
-                  } ${alert.read ? 'opacity-60' : ''}`}
+                        ? 'border-yellow-500 bg-yellow-50'
+                        : 'border-blue-500 bg-blue-50'
+                    } ${alert.read ? 'opacity-60' : ''}`}
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <div className="flex items-center space-x-2 mb-2">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          alert.severity === 'high'
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${alert.severity === 'high'
                             ? 'bg-red-100 text-red-800'
                             : alert.severity === 'medium'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {alert.severity === 'high' ? 'ฉุกเฉิน' : 
-                           alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ'}
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                          {alert.severity === 'high' ? 'ฉุกเฉิน' :
+                            alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ'}
                         </span>
                         <span className="text-xs text-gray-500">
                           {alert.device_id}
@@ -435,7 +448,7 @@ const AlertsCenter = () => {
                           ทำเครื่องหมายอ่านแล้ว
                         </button>
                       )}
-                      {(alert.type === 'emergency' || alert.type === 'warning') && careTeam.length > 0 && (
+                      {(alert.severity === 'high' || alert.severity === 'medium') && careTeam.length > 0 && (
                         <button
                           onClick={() => notifyCareTeam(alert)}
                           className="text-orange-600 hover:text-orange-800 text-sm"

@@ -256,14 +256,29 @@ function determineAlertLevel(d, t) {
 async function saveStatusToFirestore(eventTimestamp, ecgData, result) {
   try {
     const deviceId = (ecgData?.device_id || 'ECG_000').trim();
+    const userId = ecgData?.user_id; // ต้องมี user_id ใน ecgData
     const tsStr = String(eventTimestamp);
 
+    if (!userId) {
+      console.error('❌ Missing user_id in ECG data, cannot save to Firestore');
+      return;
+    }
+
+    const alertLevel = determineAlertLevel(ecgData, result.thresholds_used);
+    if (alertLevel === 'low') {
+      return;
+    }
+    
     const payload = {
       device_id: deviceId,
       event_timestamp: ecgData?.timestamp ?? eventTimestamp,
-      alert_level: determineAlertLevel(ecgData, result.thresholds_used),
+      alert_level: alertLevel,
       abnormalities: Array.isArray(result.abnormalities) ? result.abnormalities : [],
       created_at: admin.firestore.FieldValue.serverTimestamp(),
+      read: false,
+      read_at: null,
+      status: result.status,
+      type: 'ecg_abnormal',
       ecg_data: {
         timestamp: ecgData?.timestamp ?? eventTimestamp,
         heart_rate: ecgData?.heart_rate ?? null,
@@ -276,9 +291,9 @@ async function saveStatusToFirestore(eventTimestamp, ecgData, result) {
       },
     };
 
-    const docRef = db.doc(`ecg_status/${deviceId}/events/${tsStr}`);
+    const docRef = db.doc(`ecg_status/${userId}/${deviceId}/${tsStr}`);
     await docRef.set(payload);
-    console.log(`✅ Saved ECG status (minimal) for ${deviceId} at ${tsStr}`);
+    console.log(`✅ Saved ECG status (minimal) for user ${userId}, device ${deviceId} at ${tsStr}`);
   } catch (error) {
     console.error('❌ Error saving status to Firestore:', error.message || error);
   }
@@ -321,8 +336,12 @@ function fetchECGDataForDevice(info) {
         if (!result.normal) {
           await saveStatusToFirestore(timestamp, d, result);
         }
-        // ลบออกจาก RTDB ทุกกรณี
-        deleteECGData(timestamp, deviceId);
+        // // ลบออกจาก RTDB ทุกกรณี
+        // deleteECGData(timestamp, deviceId);
+        // ลบออกจาก RTDB หลังผ่านไป 20 วินาที
+        setTimeout(() => {
+          deleteECGData(timestamp, deviceId);
+        }, 20000); // 20,000 ms = 20 วินาที
       }
     })
     .catch((err) => console.error(`Error fetching ECG data for ${deviceId}:`, err));
@@ -341,4 +360,4 @@ async function mainLoop() {
 console.log('=== RUNNING ECG BACKEND SERVICE ===');
 console.log('ECG Analysis Service Started (Node.js backend, age/sex-aware, minimal payload)');
 mainLoop();
-setInterval(mainLoop, 2000);
+setInterval(mainLoop, 1000);
