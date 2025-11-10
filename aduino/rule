@@ -22,21 +22,20 @@ service cloud.firestore {
     }
 
     // --------- users -----------
-     match /users/{userId} {
-     allow read, write: if isSignedIn() && request.auth.uid == userId;
-     }
-    
-
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
 
     // --------- devices ----------- 🎯 เพิ่มส่วนนี้
-    ; match /devices/{userId} {
-    ;   allow read, write: if isSignedIn() && request.auth.uid == userId;
-    ; }
-        match /devices/{deviceId} {
+    // match /devices/{userId} {
+    //   allow read, write: if isSignedIn() && request.auth.uid == userId;
+    // }
+     match /devices/{deviceId} {
     allow get, update, delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
     allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
     allow list: if isSignedIn();
   }
+
 
     // --------- ecg_records -----------
     function isValidEcgCreate() {
@@ -168,23 +167,27 @@ service cloud.firestore {
     // ===== ecg_status/{deviceId}/events/{timestamp} =====
     // เวอร์ชันใหม่: ไม่ต้องมี user_id ในเอกสาร event
     function isValidEcgStatusCreateV2(deviceId) {
-      return hasOnly(request.resource.data, [
-        'device_id',        // ต้องตรงกับ {deviceId}
-        'event_timestamp',  // number หรือ string
-        'alert_level',      // 'low' | 'medium' | 'high'
-        'abnormalities',    // list<string>
-        'ecg_data',         // map
-        'created_at'        // == request.time (serverTimestamp)
-      ])
-      && request.resource.data.device_id is string
-      && request.resource.data.device_id == deviceId
-      && (request.resource.data.event_timestamp is number || request.resource.data.event_timestamp is string)
-      && request.resource.data.alert_level is string
-      && (request.resource.data.alert_level in ['low','medium','high'])
-      && (request.resource.data.abnormalities is list)
-      && (request.resource.data.ecg_data is map)
-      && request.resource.data.created_at == request.time;
-    }
+  return hasOnly(request.resource.data, [
+    'device_id',        // ต้องตรงกับ {deviceId}
+    'event_timestamp',  // number หรือ string
+    'alert_level',      // 'low' | 'medium' | 'high'
+    'abnormalities',    // list<string>
+    'ecg_data',         // map
+    'created_at',       // == request.time (serverTimestamp)
+    'read',             // เพิ่ม
+    'read_at',          // เพิ่ม
+    'status',           // เพิ่ม
+    'type'              // เพิ่ม
+  ])
+  && request.resource.data.device_id is string
+  && request.resource.data.device_id == deviceId
+  && (request.resource.data.event_timestamp is number || request.resource.data.event_timestamp is string)
+  && request.resource.data.alert_level is string
+  && (request.resource.data.alert_level in ['low','medium','high'])
+  && (request.resource.data.abnormalities is list)
+  && (request.resource.data.ecg_data is map)
+  && request.resource.data.created_at == request.time;
+}
 
     // (ออปชัน) รองรับเหตุการณ์รุ่นเก่าที่เคยพก user_id มาด้วย — เพื่อ backwards compatibility
     function isValidEcgStatusCreateV1(deviceId) {
@@ -217,7 +220,10 @@ service cloud.firestore {
       // ลบ: ให้เฉพาะเจ้าของอุปกรณ์ (หรือถ้าต้องการให้ device ลบเองได้ ให้เพิ่ม canDeviceWrite(deviceId))
       allow delete: if userOwnsDeviceByMapping(deviceId);
     }
-
+        // ===== ecg_status/{uid}/{device_id}/{ts} =====
+    match /ecg_status/{uid}/{device_id}/{ts} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
   
     // --------- lock down the rest ----------
     match /{document=**} {

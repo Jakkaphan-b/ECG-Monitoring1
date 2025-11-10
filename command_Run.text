@@ -28,3 +28,6 @@ cd e:\github\ECG-Monitoring1\email-server && node server.js
 
 # Terminal 2: React App  
 cd e:\github\ECG-Monitoring1 && npm run dev
+
+ cd backend
+ node chack_conncet.cjs      

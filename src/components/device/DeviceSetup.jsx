@@ -320,41 +320,65 @@ const DeviceSetup = () => {
     }
   };
 
+  // const deleteDeviceConfig = async () => {
+  //   if (!window.confirm('คุณต้องการลบข้อมูลอุปกรณ์นี้หรือไม่?')) return;
+  //   const user = auth.currentUser;
+  //   if (!user || !deviceId) return;
+  //   setIsLoading(true);
+  //   try {
+  //     // 1. ลบ ssid, password ออกจาก Firestore
+  //     const docRef = doc(db, 'devices', user.uid);
+  //     await updateDoc(docRef, {
+  //       'wifi_config.ssid': deleteField(),
+  //       'wifi_config.password': deleteField()
+  //     });
+
+  //     // 2. ลบ ssid, password ออกจาก RTDB wifi_config
+  //     const wifiConfigRef = ref(rtdb, `ecg_stream/${deviceId}/wifi_config`);
+  //     await set(wifiConfigRef, {
+  //       ssid: null,
+  //       password: null,
+  //       status: null
+  //     });
+
+  //     // 3. ส่ง flag ให้ device ลบ ssid/password ใน SPIFFS
+  //     const clearFlagRef = ref(rtdb, `ecg_stream/${deviceId}/clear_wifi_flag`);
+  //     await set(clearFlagRef, { clear: true, timestamp: Date.now() });
+
+  //     setWifiConfig({ ssid: '', password: '' });
+  //     setCurrentStep(2);
+  //     alert('ลบข้อมูลอุปกรณ์สำเร็จ กรุณาตั้งค่า WiFi ใหม่');
+  //   } catch (error) {
+  //     console.error('Error deleting device config:', error);
+  //     alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+  //   } finally {
+  //     setIsLoading(false);
+  //   }
+  // };
   const deleteDeviceConfig = async () => {
-    if (!window.confirm('คุณต้องการลบข้อมูลอุปกรณ์นี้หรือไม่?')) return;
-    const user = auth.currentUser;
-    if (!user || !deviceId) return;
-    setIsLoading(true);
-    try {
-      // 1. ลบ ssid, password ออกจาก Firestore
-      const docRef = doc(db, 'devices', user.uid);
-      await updateDoc(docRef, {
-        'wifi_config.ssid': deleteField(),
-        'wifi_config.password': deleteField()
-      });
+  if (!window.confirm('คุณต้องการลบข้อมูลอุปกรณ์นี้หรือไม่?')) return;
+  const user = auth.currentUser;
+  if (!user || !deviceId) return;
+  setIsLoading(true);
+  try {
+    // 1. ส่ง flag ให้ device ลบ ssid/password ใน SPIFFS ก่อน
+    const clearFlagRef = ref(rtdb, `ecg_stream/${deviceId}/clear_wifi_flag`);
+    await set(clearFlagRef, { clear: true, timestamp: Date.now() });
 
-      // 2. ลบ ssid, password ออกจาก RTDB wifi_config
-      const wifiConfigRef = ref(rtdb, `ecg_stream/${deviceId}/wifi_config`);
-      await set(wifiConfigRef, {
-        ssid: null,
-        password: null,
-        status: null
-      });
+    // 2. (Optionally) รอให้อุปกรณ์ออนไลน์และลบไฟล์ก่อนค่อยลบ RTDB/Firestore
+    // หรือแจ้งผู้ใช้ให้รีสตาร์ทอุปกรณ์
 
-      // 3. ส่ง flag ให้ device ลบ ssid/password ใน SPIFFS
-      const clearFlagRef = ref(rtdb, `ecg_stream/${deviceId}/clear_wifi_flag`);
-      await set(clearFlagRef, { clear: true, timestamp: Date.now() });
+    setWifiConfig({ ssid: '', password: '' });
+    setCurrentStep(2);
+    alert('ลบข้อมูลอุปกรณ์สำเร็จ กรุณารีสตาร์ทอุปกรณ์ เพื่อให้ลบข้อมูล WiFi เดิมและเข้าสู่โหมดตั้งค่าใหม่');
+  } catch (error) {
+    console.error('Error deleting device config:', error);
+    alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
-      setWifiConfig({ ssid: '', password: '' });
-      setCurrentStep(2);
-      alert('ลบข้อมูลอุปกรณ์สำเร็จ กรุณาตั้งค่า WiFi ใหม่');
-    } catch (error) {
-      console.error('Error deleting device config:', error);
-      alert('เกิดข้อผิดพลาดในการลบข้อมูล');
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const renderInstructions = () => (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">

@@ -69,7 +69,7 @@ const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
       try {
         // ดึงข้อมูล status
         const statusResponse = await fetch(
-          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/status.json'
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_003/status.json'
         );
         const statusData = await statusResponse.json();
         
@@ -81,7 +81,7 @@ const ECGChart = ({ width = 800, height = 400, showGrid = true }) => {
 
         // ดึงข้อมูล ECG analysis (ล่าสุด 10 รายการ)
         const ecgResponse = await fetch(
-          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_001/ecg_data.json'
+          'https://ecg-monitor-f1fcb-default-rtdb.firebaseio.com/ecg_stream/ECG_003/ecg_data.json'
         );
         const ecgAnalysisData = await ecgResponse.json();
         

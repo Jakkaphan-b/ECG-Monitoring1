@@ -847,6 +847,7 @@ bool analyzeECGWaveform() {
 }
 
 // ฟังก์ชันแสดงผลบน OLED
+// ...existing code...
 void updateOLED() {
   display.clearDisplay();
 
@@ -856,89 +857,38 @@ void updateOLED() {
   display.setCursor(0, 0);
   display.print("ECG_001");
 
-  // 2. อัตราการเต้นหัวใจ (กลางบน)
+    // 2. สถานะ (ขวาบน)
+  display.setTextSize(1);
+  if (WiFi.status() == WL_CONNECTED) {
+    display.setCursor(90, 0);
+    display.print("online");
+  } else if (WiFi.status() == WL_CONNECT_FAILED || WiFi.status() == WL_DISCONNECTED) {
+    display.setCursor(90, 0);
+    display.print("offline");
+  } else {
+    display.setCursor(65, 0); // ขยับไปทางซ้าย
+    display.print("connecting...");
+  }
+
+  // 3. เส้นแบ่ง
+  display.drawLine(0, 12, 128, 12, 1);
+
+  // 4. BPM ตัวใหญ่กลางจอ
   int heartRate = getCurrentHeartRate();
-  display.setCursor(50, 0);
+  display.setTextSize(2);
+  display.setCursor(0, 22);
+  display.print("BPM:");
+
+   display.setTextSize(4); // ตัวเลขใหญ่
+  display.setCursor(75, 18); // <-- เพิ่มค่าตัวแรก (x) เพื่อขยับไปทางขวา
   if (heartRate > 0) {
-    display.setTextSize(1);
     display.print(heartRate);
-    display.print(" BPM");
   } else {
-    display.setTextSize(1);
-    display.print("-- BPM");
+    display.print("--");
   }
-
-  // 3. สัญลักษณ์ WiFi (ขวาบน) - แสดงสถานะแม้ offline
-  display.setCursor(110, 0);
-  display.setTextSize(1);
-  if (WiFi.status() == WL_CONNECTED) {
-    display.print("WiFi");
-  } else {
-    display.print("X");
-  }
-
-  // 4. กราฟ ECG (พื้นที่ด้านล่าง) - แสดงแม้ไม่มี WiFi
-  int graphHeight = 45;
-  int graphTop = 18;
-  int graphLeft = 0;
-  int graphWidth = 128;
-  
-  // วาดเส้นแบ่งระหว่างส่วนบนและกราฟ
-  display.drawLine(0, 16, 128, 16, 1);
-  
-  // วาดกราฟ ECG จากข้อมูลใน buffer
-  static int ecgBuffer[128];
-  static int bufferIndex = 0;
-  
-  // เพิ่มค่า ECG ล่าสุดลงใน buffer สำหรับแสดงผล
-  if (idxBuf > 0 && idxBuf <= CHUNK_SIZE) {
-    ecgBuffer[bufferIndex] = buf[idxBuf - 1];
-    bufferIndex = (bufferIndex + 1) % 128;
-  }
-  
-  // วาดกราฟ ECG แบบ scrolling
-  for (int i = 1; i < 128; i++) {
-    int prevIndex = (bufferIndex + i - 1) % 128;
-    int currIndex = (bufferIndex + i) % 128;
-    
-    int y1 = graphTop + graphHeight - map(ecgBuffer[prevIndex], 0, 4095, 0, graphHeight);
-    int y2 = graphTop + graphHeight - map(ecgBuffer[currIndex], 0, 4095, 0, graphHeight);
-    
-    // จำกัดค่า y ไม่ให้เกินขอบเขต
-    y1 = constrain(y1, graphTop, graphTop + graphHeight);
-    y2 = constrain(y2, graphTop, graphTop + graphHeight);
-    
-    display.drawLine(i - 1, y1, i, y2, 1);
-  }
-
-  // แสดงข้อมูลเพิ่มเติมที่มุมล่าง
-  display.setCursor(0, 56);
-  display.setTextSize(1);
-  
-  // แสดงข้อมูลวิเคราะห์ ECG หรือ RR interval
-  if (qrs_amplitude > 0.0) {
-    display.print("QRS:");
-    display.print(qrs_amplitude, 1);
-    display.print("V");
-  } else if (lastRRInterval > 0) {
-    display.print("RR:");
-    display.print(lastRRInterval);
-    display.print("ms");
-  } else {
-    // แสดงสถานะเมื่อไม่มีการตรวจจับ heart rate
-    display.print("Waiting signal...");
-  }
-
-  // แสดงสถานะ WiFi ที่มุมขวาล่าง
-  display.setCursor(90, 56);
-  if (WiFi.status() == WL_CONNECTED) {
-    display.print("Online");
-  } else {
-    display.print("Offline");
-  }
-
   display.display();
 }
+// ...existing code...
 
 bool loadConfigFromSPIFFS(String &ssid, String &pass) {
   if (!SPIFFS.begin(true)) { // true = format if mount fails
@@ -1444,8 +1394,6 @@ void loop() {
     lastClearFlagCheck = millis();
   }
     
-
-  
   int v = analogRead(ECG_PIN);  // 0–4095
   
   // ป้องกัน buffer overflow สำหรับ buf array
@@ -1520,11 +1468,7 @@ void loop() {
   lastSampleTime = micros();
 }
 
-void sendChunk(int* data, int n) {
-  // ฟังก์ชันนี้ไม่ใช้แล้วในโครงสร้างใหม่
-  // ข้อมูล ECG จะส่งผ่าน sendECGAnalysis() เมื่อตรวจพบ R-peak
-  Serial.println("sendChunk() is deprecated in new structure");
-}
+
 
 void sendStatus() {
   if (WiFi.status() != WL_CONNECTED) return;
@@ -1547,16 +1491,15 @@ void sendStatus() {
   doc["rssi"] = WiFi.RSSI();            // dBm
   doc["firmware_version"] = "1.0.1";    // อัปเดตเวอร์ชัน
   
-  <!-- // เพิ่มค่า Heart Rate
-  int heartRate = getCurrentHeartRate();
-  doc["heart_rate"] = heartRate;
-  doc["rr_interval"] = lastRRInterval; -->
+  // เพิ่มค่า Heart Rate
+   int heartRate = getCurrentHeartRate();
+   doc["heart_rate"] = heartRate;
+  doc["rr_interval"] = lastRRInterval;
   
   // เพิ่ม debug info
   Serial.println("Current timestamp: " + String((unsigned long)now) + " (" + String(ctime(&now)) + ")");
-  //Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
-  Serial.println("Sending Status");
-  
+  Serial.println("Sending Status - Heart Rate: " + String(heartRate) + " BPM, RR: " + String(lastRRInterval) + " ms");
+   Serial.println("Sending Status");
   String body; serializeJson(doc, body);
   int code = http.PUT(body);
 

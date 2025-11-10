@@ -341,7 +341,7 @@ function fetchECGDataForDevice(info) {
         // ลบออกจาก RTDB หลังผ่านไป 20 วินาที
         setTimeout(() => {
           deleteECGData(timestamp, deviceId);
-        }, 20000); // 20,000 ms = 20 วินาที
+        }, 300000); // 300,000 ms = 5 นาที
       }
     })
     .catch((err) => console.error(`Error fetching ECG data for ${deviceId}:`, err));
