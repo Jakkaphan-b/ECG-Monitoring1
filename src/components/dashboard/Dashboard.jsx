@@ -4,6 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { ecgService } from '../../services/ecgService';
 import ECGChart from '../charts/ECGChart';
 import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 
 const Dashboard = () => {
   const [ecgData, setEcgData] = useState([]);
@@ -131,6 +132,19 @@ const getConnectionStatus = () => {
       </div>
     );
   }
+  // ฟังก์ชันสำหรับ export ข้อมูล ECG เป็น Excel
+  const exportToExcel = () => {
+    // สร้าง worksheet จาก ecgData
+    const ws = XLSX.utils.json_to_sheet(
+      ecgData.map((point, idx) => ({
+        Index: idx + 1,
+        Value: point,
+      }))
+    );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'ECG Data');
+    XLSX.writeFile(wb, `ecg_data_${deviceId}.xlsx`);
+  };
 
   const connectionStatus = getConnectionStatus();
   const hrStatus = getHeartRateStatus();
@@ -153,6 +167,12 @@ const getConnectionStatus = () => {
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
               >
                 🧪 Demo Data
+              </button>
+               <button
+                onClick={exportToExcel}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                📥 นำออก Excel
               </button>
               <button
                 onClick={() => navigate('/device-setup')}

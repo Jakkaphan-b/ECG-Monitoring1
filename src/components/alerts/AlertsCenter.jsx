@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase';
-import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
   const [filteredAlerts, setFilteredAlerts] = useState([]);
   const [careTeam, setCareTeam] = useState([]);
+  const [patientProfile, setPatientProfile] = useState(null);
   const [filters, setFilters] = useState({
     type: 'all',
     status: 'all',
@@ -51,11 +53,27 @@ const AlertsCenter = () => {
   useEffect(() => {
     fetchAlerts();
     fetchCareTeam();
+    fetchPatientProfile();
   }, []);
 
   useEffect(() => {
     applyFilters();
   }, [alerts, filters]);
+
+  // ฟังก์ชันดึงข้อมูลผู้ป่วยจาก Firestore
+  const fetchPatientProfile = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        setPatientProfile(userDoc.data());
+      }
+    } catch (error) {
+      console.error('Error fetching patient profile:', error);
+    }
+  };
 
   // ฟังก์ชันดึง deviceId ที่ user เป็นเจ้าของ
   const getUserDeviceIds = async () => {
@@ -210,6 +228,66 @@ const AlertsCenter = () => {
     } catch (error) {
       console.error('Error notifying care team:', error);
     }
+  };
+
+  const exportToCSV = () => {
+    // Sheet1: ข้อมูลผู้ป่วย
+    const userHeaders = [
+      "ชื่อ", "นามสกุล", "อีเมล", "เบอร์โทรศัพท์", "วันเกิด","อายุ", "เพศ", "น้ำหนัก (กก.)", "ส่วนสูง (ซม.)", "โรคประจำตัว", "เบอร์ติดต่อฉุกเฉิน", "ระดับความเสี่ยง"
+    ];
+    const calculateAge = (dob) => {
+  if (!dob) return "";
+  const birth = new Date(dob);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+};
+    const userRow = patientProfile
+      ? [[
+          patientProfile.first_name || "",
+          patientProfile.last_name || "",
+          patientProfile.email || "",
+          patientProfile.phone_number || "",
+          patientProfile.date_of_birth || "",
+          calculateAge(patientProfile.date_of_birth),
+          patientProfile.gender === "M" ? "ชาย" : patientProfile.gender === "F" ? "หญิง" : "",
+          patientProfile.weight || "",
+          patientProfile.height || "",
+          patientProfile.medical_conditions || "",
+          patientProfile.emergency_contact || "",
+          patientProfile.risk_level === "high" ? "สูง" : patientProfile.risk_level === "low" ? "ต่ำ" : "ปานกลาง"
+        ]]
+      : [["", "", "", "", "", "", "", "", "", "", "", ""]];
+    const userSheet = [userHeaders, ...userRow];
+
+    // Sheet2: ความผิดปกติ/แจ้งเตือน
+    const alertHeaders = [
+      "วันที่", "ประเภท", "ระดับ", "ข้อความ", "อัตราการเต้นหัวใจ", "อาการ", "สถานะ", "อุปกรณ์"
+    ];
+    
+    const alertRows = filteredAlerts.map(alert => [
+      alert.timestamp?.toLocaleString('th-TH') || "",
+      "ECG",
+      alert.severity === 'high' ? 'ฉุกเฉิน' : alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ',
+      alert.message?.replace(/,/g, " ") || "",
+      alert.ecg_data?.heart_rate || "",
+      alert.abnormalities ? alert.abnormalities.join(" | ") : "",
+      alert.read ? "อ่านแล้ว" : "ยังไม่อ่าน",
+      alert.device_id || ""
+    ]);
+    const alertSheet = [alertHeaders, ...alertRows];
+
+    // สร้าง workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(userSheet), "ข้อมูลผู้ป่วย");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(alertSheet), "ความผิดปกติ");
+
+    // ดาวน์โหลดไฟล์
+    XLSX.writeFile(wb, `ecg_export_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   return (
@@ -386,7 +464,18 @@ const AlertsCenter = () => {
         </div>
 
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">รายการแจ้งเตือน</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">รายการแจ้งเตือน</h2>
+            <button
+              onClick={exportToCSV}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex items-center space-x-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>นำออก Excel</span>
+            </button>
+          </div>
           {loading ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>

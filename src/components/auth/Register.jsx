@@ -191,13 +191,13 @@ function Register() {
                 onChange={handleChange}
               >
                 <option value="patient">ผู้ป่วย (Patient)</option>
-                <option value="caregiver">ผู้ดูแล (Caregiver)</option>
-                <option value="admin">ผู้ดูแลระบบ (Admin)</option>
+                {/* <option value="caregiver">ผู้ดูแล (Caregiver)</option>
+                <option value="admin">ผู้ดูแลระบบ (Admin)</option> */}
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 {form.role === "patient" && "ผู้ใช้งานหลักที่จะติดตามสุขภาพหัวใจของตนเอง"}
-                {form.role === "caregiver" && "ผู้ดูแลที่สามารถติดตามผู้ป่วยหลายคนและรับการแจ้งเตือน"}
-                {form.role === "admin" && "ผู้ดูแลระบบที่มีสิทธิ์เข้าถึงการตั้งค่าทั้งหมด"}
+                {/* {form.role === "caregiver" && "ผู้ดูแลที่สามารถติดตามผู้ป่วยหลายคนและรับการแจ้งเตือน"}
+                {form.role === "admin" && "ผู้ดูแลระบบที่มีสิทธิ์เข้าถึงการตั้งค่าทั้งหมด"} */}
               </p>
             </div>
           </div>
@@ -253,7 +253,7 @@ function Register() {
                   onChange={handleChange} 
                 />
               </div>
-              <div>
+              {/* <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">ระดับความเสี่ยง</label>
                 <select 
                   name="risk_level" 
@@ -265,7 +265,7 @@ function Register() {
                   <option value="medium">ปานกลาง (Medium)</option>
                   <option value="high">สูง (High)</option>
                 </select>
-              </div>
+              </div> */}
             </div>
             
             <div className="mt-4">

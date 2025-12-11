@@ -9,7 +9,7 @@ admin.initializeApp({
 });
 
 const rtdb = admin.database();
-const deviceIds = ['ECG_001', 'ECG_002', 'ECG_003']; // เพิ่ม device id ตามต้องการ 
+const deviceIds = ['ECG_004']; // เพิ่ม device id ตามต้องการ 
 
 function monitorConnection(deviceId) {
   const statusRef = rtdb.ref(`ecg_stream/${deviceId}/status`);
