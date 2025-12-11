@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase';
-import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, doc, updateDoc, addDoc, getDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
+
 
 const AlertsCenter = () => {
   const [alerts, setAlerts] = useState([]);
   const [filteredAlerts, setFilteredAlerts] = useState([]);
   const [careTeam, setCareTeam] = useState([]);
+  const [patientProfile, setPatientProfile] = useState(null);
   const [filters, setFilters] = useState({
     type: 'all',
     status: 'all',
@@ -15,14 +18,78 @@ const AlertsCenter = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  // ฟังก์ชันสร้างข้อความแจ้งเตือนตามข้อมูล ECG
+  const generateAlertMessage = (data) => {
+    const { abnormalities, ecg_data, alert_level } = data;
+
+    if (!abnormalities || abnormalities.length === 0) {
+      return `ECG ผิดปกติ - Heart Rate: ${ecg_data?.heart_rate} BPM`;
+    }
+
+    const messages = [];
+
+    if (abnormalities.includes('bradycardia')) {
+      messages.push(`อัตราการเต้นหัวใจช้า (${ecg_data?.heart_rate} BPM)`);
+    }
+    if (abnormalities.includes('tachycardia')) {
+      messages.push(`อัตราการเต้นหัวใจเร็ว (${ecg_data?.heart_rate} BPM)`);
+    }
+    if (abnormalities.includes('high_qrs_amplitude')) {
+      messages.push('QRS Amplitude สูงผิดปกติ');
+    }
+    if (abnormalities.includes('t_wave_inversion')) {
+      messages.push('T-wave กลับด้าน');
+    }
+    if (abnormalities.includes('pr_interval_prolonged')) {
+      messages.push('PR Interval ยาวผิดปกติ');
+    }
+    if (abnormalities.includes('qt_interval_prolonged')) {
+      messages.push('QT Interval ยาวผิดปกติ');
+    }
+
+    return messages.join(', ');
+  };
+
   useEffect(() => {
     fetchAlerts();
     fetchCareTeam();
+    fetchPatientProfile();
   }, []);
 
   useEffect(() => {
     applyFilters();
   }, [alerts, filters]);
+
+  // ฟังก์ชันดึงข้อมูลผู้ป่วยจาก Firestore
+  const fetchPatientProfile = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return;
+      
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        setPatientProfile(userDoc.data());
+      }
+    } catch (error) {
+      console.error('Error fetching patient profile:', error);
+    }
+  };
+
+  // ฟังก์ชันดึง deviceId ที่ user เป็นเจ้าของ
+  const getUserDeviceIds = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) return [];
+
+      const q = query(collection(db, "devices"), where("user_id", "==", user.uid));
+      const snapshot = await getDocs(q);
+      // เปลี่ยนจาก doc.id เป็น doc.data().device_id
+      return snapshot.docs.map(doc => doc.data().device_id);
+    } catch (error) {
+      console.error("Error fetching user devices:", error);
+      return [];
+    }
+  };
 
   const fetchAlerts = async () => {
     setLoading(true);
@@ -30,23 +97,40 @@ const AlertsCenter = () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      const alertsQuery = query(
-        collection(db, 'alerts'),
-        where('user_id', '==', user.uid),
-        orderBy('timestamp', 'desc')
-      );
+      // ดึง deviceId ที่ user เป็นเจ้าของ
+      const deviceIds = await getUserDeviceIds();
+      let allAlerts = [];
 
-      const alertsSnapshot = await getDocs(alertsQuery);
-      const alertsData = alertsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp.toDate()
-      }));
+      for (const deviceId of deviceIds) {
+        // Query ที่ path ใหม่: ecg_status/{uid}/{device_id}
+        const eventsCol = collection(db, 'ecg_status', user.uid, deviceId);
+        const eventsQuery = query(eventsCol, orderBy('created_at', 'desc'));
+        const eventsSnapshot = await getDocs(eventsQuery);
 
-      setAlerts(alertsData);
+        const alertsData = eventsSnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            type: 'ecg_abnormal', // เนื่องจากข้อมูลใน ecg_status เป็นผิดปกติทั้งหมด
+            message: generateAlertMessage(data),
+            timestamp: data.created_at?.toDate() || new Date(),
+            severity: data.alert_level || 'medium',
+            read: data.read === true, // ใช้ค่าจาก Firestore
+            device_id: data.device_id || deviceId,
+            status: data.read === true ? 'read' : 'unread' // อิงจาก read จริง
+          };
+        });
+
+        allAlerts = allAlerts.concat(alertsData);
+      }
+
+      // รวมและ sort ตามเวลา
+      allAlerts.sort((a, b) => b.timestamp - a.timestamp);
+      setAlerts(allAlerts);
     } catch (error) {
-      console.error('Error fetching alerts:', error);
-      alert('เกิดข้อผิดพลาดในการโหลดการแจ้งเตือน');
+      console.error('Error fetching ECG alerts:', error);
+      alert('เกิดข้อผิดพลาดในการโหลดการแจ้งเตือน ECG');
     } finally {
       setLoading(false);
     }
@@ -78,11 +162,19 @@ const AlertsCenter = () => {
     let filtered = alerts;
 
     if (filters.type !== 'all') {
-      filtered = filtered.filter(alert => alert.type === filters.type);
+      if (filters.type === 'ecg') {
+        filtered = filtered.filter(alert => alert.type?.includes('ecg'));
+      } else if (filters.type === 'high_severity') {
+        filtered = filtered.filter(alert => alert.severity === 'high');
+      } else if (filters.type === 'medium_severity') {
+        filtered = filtered.filter(alert => alert.severity === 'medium');
+      } else {
+        filtered = filtered.filter(alert => alert.type === filters.type);
+      }
     }
 
     if (filters.status !== 'all') {
-      filtered = filtered.filter(alert => 
+      filtered = filtered.filter(alert =>
         filters.status === 'read' ? alert.read : !alert.read
       );
     }
@@ -90,15 +182,19 @@ const AlertsCenter = () => {
     setFilteredAlerts(filtered);
   };
 
-  const markAsRead = async (alertId) => {
+  const markAsRead = async (alertId, deviceId) => {
     try {
-      await updateDoc(doc(db, 'alerts', alertId), {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      // อัปเดตใน ecg_status/{uid}/{deviceId}/{alertId}
+      await updateDoc(doc(db, 'ecg_status', user.uid, deviceId, alertId), {
         read: true,
         read_at: new Date()
       });
 
-      setAlerts(alerts.map(alert => 
-        alert.id === alertId ? { ...alert, read: true } : alert
+      setAlerts(alerts.map(alert =>
+        alert.id === alertId ? { ...alert, read: true, status: 'read' } : alert
       ));
     } catch (error) {
       console.error('Error marking alert as read:', error);
@@ -110,7 +206,7 @@ const AlertsCenter = () => {
       // สร้างการแจ้งเตือนสำหรับทีมผู้ดูแลที่เปิดการแจ้งเตือน
       const notificationsPromises = careTeam
         .filter(member => member.notifications_enabled)
-        .map(member => 
+        .map(member =>
           addDoc(collection(db, 'care_team_notifications'), {
             care_team_member_id: member.id,
             patient_id: auth.currentUser.uid,
@@ -132,6 +228,66 @@ const AlertsCenter = () => {
     } catch (error) {
       console.error('Error notifying care team:', error);
     }
+  };
+
+  const exportToCSV = () => {
+    // Sheet1: ข้อมูลผู้ป่วย
+    const userHeaders = [
+      "ชื่อ", "นามสกุล", "อีเมล", "เบอร์โทรศัพท์", "วันเกิด","อายุ", "เพศ", "น้ำหนัก (กก.)", "ส่วนสูง (ซม.)", "โรคประจำตัว", "เบอร์ติดต่อฉุกเฉิน", "ระดับความเสี่ยง"
+    ];
+    const calculateAge = (dob) => {
+  if (!dob) return "";
+  const birth = new Date(dob);
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) {
+    age--;
+  }
+  return age;
+};
+    const userRow = patientProfile
+      ? [[
+          patientProfile.first_name || "",
+          patientProfile.last_name || "",
+          patientProfile.email || "",
+          patientProfile.phone_number || "",
+          patientProfile.date_of_birth || "",
+          calculateAge(patientProfile.date_of_birth),
+          patientProfile.gender === "M" ? "ชาย" : patientProfile.gender === "F" ? "หญิง" : "",
+          patientProfile.weight || "",
+          patientProfile.height || "",
+          patientProfile.medical_conditions || "",
+          patientProfile.emergency_contact || "",
+          patientProfile.risk_level === "high" ? "สูง" : patientProfile.risk_level === "low" ? "ต่ำ" : "ปานกลาง"
+        ]]
+      : [["", "", "", "", "", "", "", "", "", "", "", ""]];
+    const userSheet = [userHeaders, ...userRow];
+
+    // Sheet2: ความผิดปกติ/แจ้งเตือน
+    const alertHeaders = [
+      "วันที่", "ประเภท", "ระดับ", "ข้อความ", "อัตราการเต้นหัวใจ", "อาการ", "สถานะ", "อุปกรณ์"
+    ];
+    
+    const alertRows = filteredAlerts.map(alert => [
+      alert.timestamp?.toLocaleString('th-TH') || "",
+      "ECG",
+      alert.severity === 'high' ? 'ฉุกเฉิน' : alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ',
+      alert.message?.replace(/,/g, " ") || "",
+      alert.ecg_data?.heart_rate || "",
+      alert.abnormalities ? alert.abnormalities.join(" | ") : "",
+      alert.read ? "อ่านแล้ว" : "ยังไม่อ่าน",
+      alert.device_id || ""
+    ]);
+    const alertSheet = [alertHeaders, ...alertRows];
+
+    // สร้าง workbook
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(userSheet), "ข้อมูลผู้ป่วย");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(alertSheet), "ความผิดปกติ");
+
+    // ดาวน์โหลดไฟล์
+    XLSX.writeFile(wb, `ecg_export_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   return (
@@ -164,7 +320,7 @@ const AlertsCenter = () => {
               จัดการทีม
             </button>
           </div>
-          
+
           {careTeam.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {careTeam.map((member) => (
@@ -179,11 +335,10 @@ const AlertsCenter = () => {
                       <h3 className="font-medium text-gray-900">{member.name}</h3>
                       <p className="text-sm text-gray-500 capitalize">{member.role}</p>
                       <div className="flex items-center space-x-2 mt-1">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          member.notifications_enabled 
-                            ? 'bg-green-100 text-green-800' 
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${member.notifications_enabled
+                            ? 'bg-green-100 text-green-800'
                             : 'bg-gray-100 text-gray-800'
-                        }`}>
+                          }`}>
                           {member.notifications_enabled ? 'แจ้งเตือนเปิด' : 'แจ้งเตือนปิด'}
                         </span>
                       </div>
@@ -216,13 +371,13 @@ const AlertsCenter = () => {
             <div className="flex items-center">
               <div className="p-2 bg-red-100 rounded-lg">
                 <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 18.5c-.77.833.192 2.5 1.732 2.5z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">ฉุกเฉิน</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'emergency').length}
+                  {alerts.filter(alert => alert.severity === 'high').length}
                 </p>
               </div>
             </div>
@@ -238,7 +393,7 @@ const AlertsCenter = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">คำเตือน</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'warning').length}
+                  {alerts.filter(alert => alert.severity === 'medium').length}
                 </p>
               </div>
             </div>
@@ -254,7 +409,7 @@ const AlertsCenter = () => {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">ข้อมูล</p>
                 <p className="text-2xl font-semibold text-gray-900">
-                  {alerts.filter(alert => alert.type === 'info').length}
+                  {alerts.filter(alert => alert.severity === 'low').length}
                 </p>
               </div>
             </div>
@@ -288,16 +443,39 @@ const AlertsCenter = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md"
               >
                 <option value="all">ทั้งหมด</option>
-                <option value="emergency">ฉุกเฉิน</option>
-                <option value="warning">คำเตือน</option>
-                <option value="info">ข้อมูล</option>
+                <option value="ecg">ECG ผิดปกติ</option>
+                <option value="high_severity">ฉุกเฉิน</option>
+                <option value="medium_severity">คำเตือน</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">สถานะ</label>
+              <select
+                value={filters.status}
+                onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md"
+              >
+                <option value="all">ทั้งหมด</option>
+                <option value="read">อ่านแล้ว</option>
+                <option value="unread">ยังไม่อ่าน</option>
               </select>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">รายการแจ้งเตือน</h2>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">รายการแจ้งเตือน</h2>
+            <button
+              onClick={exportToCSV}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm flex items-center space-x-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>นำออก Excel</span>
+            </button>
+          </div>
           {loading ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -308,29 +486,27 @@ const AlertsCenter = () => {
               {filteredAlerts.map((alert) => (
                 <div
                   key={alert.id}
-                  className={`p-4 rounded-lg border-l-4 ${
-                    alert.type === 'emergency'
+                  className={`p-4 rounded-lg border-l-4 ${alert.severity === 'high'
                       ? 'border-red-500 bg-red-50'
-                      : alert.type === 'warning'
-                      ? 'border-yellow-500 bg-yellow-50'
-                      : 'border-blue-500 bg-blue-50'
-                  } ${alert.read ? 'opacity-60' : ''}`}
+                      : alert.severity === 'medium'
+                        ? 'border-yellow-500 bg-yellow-50'
+                        : 'border-blue-500 bg-blue-50'
+                    } ${alert.read ? 'opacity-60' : ''}`}
                 >
                   <div className="flex justify-between items-start">
                     <div className="flex-1">
                       <div className="flex items-center space-x-2 mb-2">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          alert.type === 'emergency'
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${alert.severity === 'high'
                             ? 'bg-red-100 text-red-800'
-                            : alert.type === 'warning'
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {alert.type === 'emergency' ? 'ฉุกเฉิน' : 
-                           alert.type === 'warning' ? 'คำเตือน' : 'ข้อมูล'}
+                            : alert.severity === 'medium'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                          {alert.severity === 'high' ? 'ฉุกเฉิน' :
+                            alert.severity === 'medium' ? 'คำเตือน' : 'ปกติ'}
                         </span>
-                        <span className="text-sm text-gray-500">
-                          {alert.timestamp.toLocaleString('th-TH')}
+                        <span className="text-xs text-gray-500">
+                          {alert.device_id}
                         </span>
                         {!alert.read && (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
@@ -338,24 +514,30 @@ const AlertsCenter = () => {
                           </span>
                         )}
                       </div>
-                      <h3 className="font-medium text-gray-900 mb-1">{alert.title}</h3>
+                      <h3 className="font-medium text-gray-900 mb-1">การแจ้งเตือน ECG</h3>
                       <p className="text-gray-600 text-sm">{alert.message}</p>
-                      {alert.heart_rate && (
-                        <p className="text-sm text-gray-500 mt-2">
-                          อัตราการเต้นหัวใจ: {alert.heart_rate} bpm
-                        </p>
+                      {alert.ecg_data?.heart_rate && (
+                        <div className="mt-2 text-sm text-gray-500">
+                          <p>💓 อัตราการเต้นหัวใจ: {alert.ecg_data.heart_rate} BPM</p>
+                          {alert.abnormalities && alert.abnormalities.length > 0 && (
+                            <p>⚠️ อาการ: {alert.abnormalities.join(', ')}</p>
+                          )}
+                        </div>
                       )}
+                      <p className="text-xs text-gray-400 mt-2">
+                        {alert.timestamp.toLocaleString('th-TH')}
+                      </p>
                     </div>
                     <div className="flex space-x-2">
                       {!alert.read && (
                         <button
-                          onClick={() => markAsRead(alert.id)}
+                          onClick={() => markAsRead(alert.id, alert.device_id)}
                           className="text-blue-600 hover:text-blue-800 text-sm"
                         >
                           ทำเครื่องหมายอ่านแล้ว
                         </button>
                       )}
-                      {(alert.type === 'emergency' || alert.type === 'warning') && careTeam.length > 0 && (
+                      {(alert.severity === 'high' || alert.severity === 'medium') && careTeam.length > 0 && (
                         <button
                           onClick={() => notifyCareTeam(alert)}
                           className="text-orange-600 hover:text-orange-800 text-sm"

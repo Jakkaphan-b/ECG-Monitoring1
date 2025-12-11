@@ -2,17 +2,19 @@
   "name": "vite-react-tailwind-ready",
   "version": "0.0.1",
   "type": "module",
-  
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "firebase": "^12.0.0",
+    "firebase": "^12.4.0",
+    "firebase-admin": "^13.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.7.0"
+    "react-router-dom": "^7.7.0",
+    "recharts": "^3.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",

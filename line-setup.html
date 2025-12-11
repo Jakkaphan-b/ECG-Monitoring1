@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เชื่อมต่อ LINE สำหรับระบบแจ้งเตือน ECG</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        .line-logo {
+            width: 60px;
+            height: 60px;
+            background: #00c300;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .qr-placeholder {
+            width: 200px;
+            height: 200px;
+            background: #f5f5f5;
+            border: 2px dashed #ddd;
+            border-radius: 10px;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 14px;
+        }
+        .steps {
+            text-align: left;
+            margin: 20px 0;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .step {
+            margin: 10px 0;
+            display: flex;
+            align-items: flex-start;
+        }
+        .step-number {
+            background: #00c300;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+        .step-text {
+            font-size: 14px;
+            color: #333;
+            line-height: 1.4;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 13px;
+            color: #856404;
+            text-align: left;
+        }
+        .bot-info {
+            background: #e3f2fd;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 13px;
+            color: #1565c0;
+        }
+        .commands {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            text-align: left;
+        }
+        .command {
+            font-family: 'Courier New', monospace;
+            background: #333;
+            color: #00c300;
+            padding: 5px 8px;
+            border-radius: 4px;
+            margin: 5px 0;
+            display: inline-block;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="line-logo">LINE</div>
+        <h1>เชื่อมต่อ LINE Bot</h1>
+        <p class="subtitle">สำหรับรับการแจ้งเตือนระบบ ECG Monitoring</p>
+        
+        <div class="qr-placeholder">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https%3A//line.me/R/ti/p/%40981xsbcm" 
+                 alt="LINE Official Account QR Code" 
+                 style="width: 200px; height: 200px; border-radius: 10px;">
+        </div>
+        
+        <div class="bot-info">
+            <strong>ข้อมูล LINE Official Account:</strong><br>
+            Basic ID: @981xsbcm<br>
+            สถานะ: 🟢 พร้อมใช้งาน
+        </div>
+        
+        <div class="steps">
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-text">สแกน QR Code หรือค้นหา LINE Bot</div>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-text">เพิ่มเป็นเพื่อนใน LINE</div>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-text">ส่งข้อความเพื่อขอ User ID</div>
+            </div>
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-text">นำ User ID ไปกรอกในเว็บไซต์</div>
+            </div>
+        </div>
+        
+        <div class="commands">
+            <strong>คำสั่งที่ใช้ได้:</strong><br>
+            <div class="command">myid</div> - ดู LINE User ID<br>
+            <div class="command">help</div> - ดูคำสั่งทั้งหมด
+        </div>
+        
+        <div class="warning">
+            <strong>⚠️ หมายเหตุ:</strong><br>
+            • ต้องอัปเกรด Firebase เป็น Blaze Plan ก่อน<br>
+            • เก็บ User ID ไว้ใช้เชื่อมต่อในระบบ<br>
+            • ใช้สำหรับรับการแจ้งเตือนฉุกเฉินเท่านั้น
+        </div>
+    </div>
+</body>
+</html>

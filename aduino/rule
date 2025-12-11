@@ -1,0 +1,233 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------- Helpers ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwnerData(data) {
+      return isSignedIn() && data.user_id == request.auth.uid;
+    }
+    function isOwnerResource() {
+      return isSignedIn() && resource.data.user_id == request.auth.uid;
+    }
+    // ไม่ให้เปลี่ยนเจ้าของเอกสารตอน update
+    function userIdUnchanged() {
+      return request.resource.data.user_id == resource.data.user_id;
+    }
+    // อนุญาตเฉพาะคีย์ที่ระบุ
+    function hasOnly(data, allowed) {
+      return data.keys().hasOnly(allowed);
+    }
+
+    // --------- users -----------
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // --------- devices ----------- 🎯 เพิ่มส่วนนี้
+    // match /devices/{userId} {
+    //   allow read, write: if isSignedIn() && request.auth.uid == userId;
+    // }
+     match /devices/{deviceId} {
+    allow get, update, delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
+    allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+    allow list: if isSignedIn();
+  }
+
+
+    // --------- ecg_records -----------
+    function isValidEcgCreate() {
+      return hasOnly(request.resource.data, [
+        'user_id','heart_rate','ecg_value','timestamp','device_id','status','created_at'
+      ])
+      && request.resource.data.user_id is string
+      && request.resource.data.heart_rate is number
+      && request.resource.data.ecg_value is number
+      && request.resource.data.device_id is string
+      && request.resource.data.status is string
+      && request.resource.data.timestamp is timestamp
+      && request.resource.data.created_at == request.time
+      && isOwnerData(request.resource.data);
+    }
+    function isValidEcgUpdate() {
+      return hasOnly(request.resource.data, [
+        'user_id','heart_rate','ecg_value','timestamp','device_id','status','created_at','updated_at'
+      ])
+      && request.resource.data.heart_rate is number
+      && request.resource.data.ecg_value is number
+      && request.resource.data.device_id is string
+      && request.resource.data.status is string
+      && request.resource.data.timestamp is timestamp
+      && userIdUnchanged()
+      && request.resource.data.updated_at == request.time
+      && isOwnerResource();
+    }
+
+    match /ecg_records/{recordId} {
+      allow create: if isValidEcgCreate();
+      allow read:   if isOwnerResource();
+      allow update: if isValidEcgUpdate();
+      allow delete: if isOwnerResource();
+    }
+
+    // --------- alerts -----------
+    function isValidAlertCreate() {
+      return hasOnly(request.resource.data, [
+        'user_id','type','message','severity','created_at','read'
+      ])
+      && request.resource.data.user_id is string
+      && request.resource.data.type is string
+      && request.resource.data.message is string
+      && request.resource.data.severity is string
+      && request.resource.data.read is bool
+      && request.resource.data.created_at == request.time
+      && isOwnerData(request.resource.data);
+    }
+    function isValidAlertUpdate() {
+      return hasOnly(request.resource.data, [
+        'user_id','type','message','severity','created_at','read','updated_at'
+      ])
+      && request.resource.data.type is string
+      && request.resource.data.message is string
+      && request.resource.data.severity is string
+      && request.resource.data.read is bool
+      && userIdUnchanged()
+      && request.resource.data.updated_at == request.time
+      && isOwnerResource();
+    }
+
+    match /alerts/{alertId} {
+      allow create: if isValidAlertCreate();
+      allow read:   if isOwnerResource();
+      allow update: if isValidAlertUpdate();
+      allow delete: if isOwnerResource();
+    }
+
+    // --------- care_team -----------
+    function isValidCareTeamCreate() {
+      return hasOnly(request.resource.data, [
+        'patient_id','name','email','role','notifications_enabled','member_uid','created_at'
+      ])
+      && request.resource.data.patient_id is string
+      && request.resource.data.name is string
+      && request.resource.data.email is string
+      && request.resource.data.role is string
+      && request.resource.data.notifications_enabled is bool
+      && (request.resource.data.member_uid == null || request.resource.data.member_uid is string)
+      && request.resource.data.created_at == request.time
+      && request.resource.data.patient_id == request.auth.uid;
+    }
+    function isValidCareTeamUpdate() {
+      return hasOnly(request.resource.data, [
+        'patient_id','name','email','role','notifications_enabled','member_uid','created_at','updated_at'
+      ])
+      && request.resource.data.name is string
+      && request.resource.data.email is string
+      && request.resource.data.role is string
+      && request.resource.data.notifications_enabled is bool
+      && (request.resource.data.member_uid == null || request.resource.data.member_uid is string)
+      && request.resource.data.patient_id == resource.data.patient_id
+      && request.resource.data.updated_at == request.time
+      && resource.data.patient_id == request.auth.uid;
+    }
+    function careTeamReadable() {
+      return (isSignedIn() &&
+        (resource.data.patient_id == request.auth.uid ||
+         (resource.data.member_uid != null && resource.data.member_uid == request.auth.uid)));
+    }
+
+    match /care_team/{memberId} {
+      allow get, list: if careTeamReadable();
+      allow create:    if isSignedIn() && isValidCareTeamCreate();
+      allow update:    if isSignedIn() && isValidCareTeamUpdate();
+      allow delete:    if isSignedIn() && resource.data.patient_id == request.auth.uid;
+    }
+    
+         // ===== owner mapping via devices/{deviceId}.user_id =====
+    function ownerUidOfDevice(deviceId) {
+      return exists(/databases/$(database)/documents/devices/$(deviceId))
+        ? get(/databases/$(database)/documents/devices/$(deviceId)).data.user_id
+        : null;
+    }
+    function userOwnsDeviceByMapping(deviceId) {
+      return isSignedIn() && ownerUidOfDevice(deviceId) == request.auth.uid;
+    }
+
+    // (ถ้าใช้งาน device-auth ด้วย custom claim ใส่ helper นี้)
+    function deviceIdOfToken() {
+      return (isSignedIn() && 'device_id' in request.auth.token) ? request.auth.token.device_id : null;
+    }
+    function canDeviceWrite(deviceId) {
+      // อุปกรณ์เขียนของตัวเอง หรือเจ้าของอุปกรณ์ในแอป เขียนผ่าน backend ก็ได้
+      return (deviceIdOfToken() == deviceId) || userOwnsDeviceByMapping(deviceId);
+    }
+
+    // ===== ecg_status/{deviceId}/events/{timestamp} =====
+    // เวอร์ชันใหม่: ไม่ต้องมี user_id ในเอกสาร event
+    function isValidEcgStatusCreateV2(deviceId) {
+  return hasOnly(request.resource.data, [
+    'device_id',        // ต้องตรงกับ {deviceId}
+    'event_timestamp',  // number หรือ string
+    'alert_level',      // 'low' | 'medium' | 'high'
+    'abnormalities',    // list<string>
+    'ecg_data',         // map
+    'created_at',       // == request.time (serverTimestamp)
+    'read',             // เพิ่ม
+    'read_at',          // เพิ่ม
+    'status',           // เพิ่ม
+    'type'              // เพิ่ม
+  ])
+  && request.resource.data.device_id is string
+  && request.resource.data.device_id == deviceId
+  && (request.resource.data.event_timestamp is number || request.resource.data.event_timestamp is string)
+  && request.resource.data.alert_level is string
+  && (request.resource.data.alert_level in ['low','medium','high'])
+  && (request.resource.data.abnormalities is list)
+  && (request.resource.data.ecg_data is map)
+  && request.resource.data.created_at == request.time;
+}
+
+    // (ออปชัน) รองรับเหตุการณ์รุ่นเก่าที่เคยพก user_id มาด้วย — เพื่อ backwards compatibility
+    function isValidEcgStatusCreateV1(deviceId) {
+      return hasOnly(request.resource.data, [
+        'user_id','device_id','event_timestamp','alert_level','abnormalities','ecg_data','created_at'
+      ])
+      && request.resource.data.user_id is string
+      && request.resource.data.device_id is string
+      && request.resource.data.device_id == deviceId
+      && (request.resource.data.event_timestamp is number || request.resource.data.event_timestamp is string)
+      && request.resource.data.alert_level is string
+      && (request.resource.data.alert_level in ['low','medium','high'])
+      && (request.resource.data.abnormalities is list)
+      && (request.resource.data.ecg_data is map)
+      && request.resource.data.created_at == request.time
+      && userOwnsDeviceByMapping(deviceId); // เจ้าของจาก devices mapping
+    }
+
+    match /ecg_status/{deviceId}/events/{ts} {
+      // อ่าน: เฉพาะเจ้าของอุปกรณ์ (จาก devices mapping)
+      allow get, list, read: if userOwnsDeviceByMapping(deviceId);
+
+      // สร้าง: ต้องเป็นอุปกรณ์ของตัวเอง หรือเจ้าของอุปกรณ์/แบ็กเอนด์ และข้อมูลตรง schema
+      allow create: if canDeviceWrite(deviceId)
+                    && (isValidEcgStatusCreateV2(deviceId) || isValidEcgStatusCreateV1(deviceId));
+
+      // อัปเดต: แนะนำ "ปิด" เพื่อความปลอดภัย/ความถูกต้องของบันทึก
+      // allow update: if false;
+
+      // ลบ: ให้เฉพาะเจ้าของอุปกรณ์ (หรือถ้าต้องการให้ device ลบเองได้ ให้เพิ่ม canDeviceWrite(deviceId))
+      allow delete: if userOwnsDeviceByMapping(deviceId);
+    }
+        // ===== ecg_status/{uid}/{device_id}/{ts} =====
+    match /ecg_status/{uid}/{device_id}/{ts} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  
+    // --------- lock down the rest ----------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

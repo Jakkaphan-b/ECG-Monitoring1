@@ -4,7 +4,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from './App.jsx'
 import { Login, Register, ProtectedRoute } from "./components/auth";
 import { Dashboard } from "./components/dashboard";
-import { History } from "./components/history";
+// import { History } from "./components/history";
 import { AlertsCenter } from "./components/alerts";
 import { DeviceSetup } from "./components/device";
 import { UserProfile } from "./components/profile";
@@ -49,13 +49,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(
             </AppWrapper>
           </ProtectedRoute>
         } />
-        <Route path="/history" element={
+        {/* <Route path="/history" element={
           <ProtectedRoute>
             <AppWrapper>
               <History />
             </AppWrapper>
           </ProtectedRoute>
-        } />
+        } /> */}
         <Route path="/alerts" element={
           <ProtectedRoute>
             <AppWrapper>
